@@ -1,6 +1,8 @@
 # Alternative scheduler
 Scheduler that when triggered runs a project until it stabilizes, then stops. 
 
+[![Build Status](https://travis-ci.org/sesam-community/scheduler.svg?branch=master)](https://travis-ci.org/sesam-community/scheduler)
+
 ## API
 
 GET / returns scheduler state (se example-state.json)
