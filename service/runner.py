@@ -16,7 +16,8 @@ logger = logging.getLogger('bootstrapper-scheduler.runner')
 
 class Runner:
 
-    def __init__(self, api_connection, pipes=[], profiling=False):
+    def __init__(self, api_connection, pipes, profiling=False,
+                 skip_input_pipes=False, skip_internal_pipes=False, skip_output_pipes=False):
         self.api_connection = api_connection
         self.api_connection.session.verify = False
         self.execution_datasets = {}
@@ -35,6 +36,30 @@ class Runner:
             if not pipe:
                 logger.error("Couldn't find pipe '%s'!" % pipe_id)
                 sys.exit(1)
+
+            effective_config = pipe._raw_jsondata["config"]["effective"]
+
+            source = effective_config.get("source")
+            sink = effective_config.get("sink")
+
+            source_system = source.get("system")
+            sink_system = sink.get("system")
+
+            if source_system.startswith("system:sesam-node"):
+                if sink_system.startswith("system:sesam-node") and \
+                                         sink["type"] not in ["http_endpoint", "xml_endpoint", "csv_endpoint"]:
+                    if skip_internal_pipes:
+                        logging.info("Skipping internal pipe '%s'", pipe_id)
+                        continue
+                else:
+                    if skip_output_pipes:
+                        logging.info("Skipping output pipe '%s'", pipe_id)
+                        continue
+            else:
+                if skip_input_pipes:
+                    logging.info("Skipping input pipe '%s'", pipe_id)
+                    continue
+
             _pipes.append(pipe)
 
         self.pipes = OrderedDict()
@@ -92,17 +117,18 @@ class Runner:
                     if sink_datasets and not isinstance(sink_datasets, list):
                         sink_datasets = [sink_datasets]
 
-                    logger.info("Deleting datasets: %s" % sink_datasets)
-                    for dataset_id in sink_datasets:
-                        dataset = self.api_connection.get_dataset(dataset_id)
-                        if dataset:
-                            logger.info("Deleting dataset '%s' in in node.." % dataset_id)
-                            dataset.delete()
-                        else:
-                            logger.warning("Failed to delete dataset '%s' in in node "
-                                           "- could not find dataset" % dataset_id)
+                    if sink_datasets:
+                        logger.info("Deleting datasets: %s" % sink_datasets)
+                        for dataset_id in sink_datasets:
+                            dataset = self.api_connection.get_dataset(dataset_id)
+                            if dataset:
+                                logger.info("Deleting dataset '%s' in in node.." % dataset_id)
+                                dataset.delete()
+                            else:
+                                logger.warning("Failed to delete dataset '%s' in in node "
+                                               "- could not find dataset" % dataset_id)
 
-            logger.info("Deleting pipe '%s' in in node.." % pipe.id)
+            logger.info("Resetting pipe '%s'.." % pipe.id)
             pump = pipe.get_pump()
 
             if "update-last-seen" in pump.supported_operations:
@@ -242,12 +268,21 @@ class Runner:
             }
             return processed_entities
 
-
-    def get_queues(self, pipes):
+    def get_pipe_queues(self, pipes):
         queues = []
         for pipe in self.pipes.values():
             updated_pipe = self.api_connection.get_pipe(pipe.id)
             queues.append(updated_pipe.runtime["queues"])
+
+        return queues
+
+    def get_dataset_queues(self):
+        queues = []
+        for dataset in self.api_connection.get_datasets():
+            if dataset.id.startswith("system:"):
+                continue
+
+            queues.append(dataset._raw_jsondata["runtime"]["queues"])
 
         return queues
 
@@ -300,12 +335,12 @@ class Runner:
             if not finished:
                 logger.info("Finished run #%s, sleeping for a while to let the tailer task catch up..." % runs)
 
-                prev_queues = self.get_queues(self.pipes.values())
+                prev_queues = self.get_pipe_queues(self.pipes.values())
 
                 i = 0
                 while i < 30: # Max 30 minutes of sleep
                     time.sleep(30)
-                    new_queues = self.get_queues(self.pipes.values())
+                    new_queues = self.get_pipe_queues(self.pipes.values())
                     #print(queues)
                     #print(prev_queues)
                     if prev_queues == new_queues:
@@ -328,10 +363,11 @@ class Runner:
 
         return total_processed
 
-    def run_pipes_no_deps(self):
+    def run_pipes_no_deps(self, reset_pipes_and_delete_datasets=False):
         """ New style runner with sync deps tracker - i.e. it is done when nothing gets processed anymore """
         self.stop_and_disable_pipes(self.pipes.values())
-        self.reset_pipes_and_delete_datasets(self.pipes.values())
+        if reset_pipes_and_delete_datasets:
+            self.reset_pipes_and_delete_datasets(self.pipes.values())
 
         runs = 0
         finished = False

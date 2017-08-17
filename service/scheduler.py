@@ -6,17 +6,17 @@ import sys
 import argparse
 import threading
 import sesamclient
-from collections import OrderedDict
 import logging
+import threading
 from datetime import datetime
 from pprint import pformat
 from tarjan import tarjan
 import time
 
-from .graph import Graph
-from .runner import Runner
+from graph import Graph
+from runner import Runner
 
-logger = logging.getLogger('bootstrapper-scheduler.main')
+logger = logging.getLogger('bootstrapper-scheduler')
 
 class SchedulerThread:
 
@@ -27,33 +27,63 @@ class SchedulerThread:
     def run(self):
         self._status = "running"
 
-        finished = True
+        finished = False
         runs = 0
-        while not finished and runs < 100:
+        while self.keep_running and not finished and runs < 100:
             finished = False
             total_processed = 0
-            for runner in runners:
-                logger.info("Running subgraph #%s..." % runner.subgraph)
+            for runner in self._runners:
+                logger.info("Running subgraph #%s (run #%s)...", runner.subgraph, runs)
 
-                total_processed += runner.run_pipes_no_deps()
+                total_processed += runner.run_pipes_no_deps(reset_pipes_and_delete_datasets=True)
 
             if total_processed == 0:
+                # No entities was processed, we might be done - check queues to be sure
+                logger.info("No entities processed after run #%s, checking queues...", runs)
+
+                total_dataset_queue = 0
+                total_pipe_queue = 0
+
+                for queue in self._runners[0].get_dataset_queues():
+                    total_dataset_queue += queue.get("size", 0)
+
+                if total_dataset_queue > 0:
+                    logger.info("Dataset queues are not empty (was %s) - doing another run..", total_dataset_queue)
+
+                    continue
+
+                for runner in self._runners:
+                    for queue in runner.get_pipe_queues(runner.pipes.values()):
+                        logger.info("Pipe queues are not empty (was %s) - doing another run..", total_pipe_queue)
+                        total_pipe_queue += queue.get("source", 0)
+
+                if total_dataset_queue > 0:
+                    continue
+
+                # No more entities and the queues are empty - this means we're done
                 finished = True
 
             runs += 1
 
-        if not finished:
-            logger.error("Could not finish after %s runs :(" % runs)
+        if not self.keep_running:
+            logger.info("Task was interrupted!")
+            self._status = "stopped"
         else:
-            logger.info("Finished after %s runs :)" % runs)
+            if not finished:
+                logger.error("Could not finish after %s runs :(" % runs)
+            else:
+                logger.info("Finished after %s runs :)" % runs)
 
-        self.done()
+            self._status = "finished"
+
+    def start(self):
+        self.keep_running = True
+        self._thread = threading.Thread(target=self.run, daemon=True)
+        self._thread.start()
 
     def stop(self):
-        self._status = "stopped"
-
-    def done(self):
-        self._status = "finished"
+        self.keep_running = False
+        self._thread.join()
 
     @property
     def status(self):
@@ -84,9 +114,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    node = sesamclient.Connection(sesamapi_base_url=args.node_url + "api", jwt_auth_token=args.jwt_token, timeout=60*10)
+    api_connection = sesamclient.Connection(sesamapi_base_url=args.node_url + "api", jwt_auth_token=args.jwt_token, timeout=60*10)
 
-    graph = Graph(node)
+    graph = Graph(api_connection)
     #graph = TestGraph()
 
     # Compute optimal rank
@@ -105,8 +135,8 @@ if __name__ == '__main__':
 
     graph.unvisitNodes()
 
-    all_runner = Runner(api_connection=node, pipes=[p.id for p in graph.pipes])
-    all_runner.stop_and_disable_pipes()
+    all_runner = Runner(api_connection=api_connection, pipes=[p.id for p in graph.pipes])
+    all_runner.stop_and_disable_pipes(all_runner.pipes.values())
 
     sub_graph_runners = []
 
@@ -138,8 +168,13 @@ if __name__ == '__main__':
 
         logger.info("Optimal sequence for subgraph #%s:\n%s" % (subgraph, pformat(pipes)))
 
-        runner = Runner(api_connection=node, pipes=pipes)
+        runner = Runner(api_connection=api_connection, pipes=pipes, skip_output_pipes=True)
         runner.subgraph = subgraph
         sub_graph_runners.append(runner)
 
     # TODO: start scheduler thread
+    scheduler = SchedulerThread(sub_graph_runners)
+    scheduler.start()
+
+    while scheduler.status not in ["done", "finished"]:
+        time.sleep(10)
