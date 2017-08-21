@@ -22,6 +22,7 @@ class Runner:
         self.api_connection.session.verify = False
         self.execution_datasets = {}
         self.stats = {}
+        self.input_pipes = {}
 
         if profiling:
             self.pump_params = {
@@ -45,20 +46,32 @@ class Runner:
             source_system = source.get("system")
             sink_system = sink.get("system")
 
-            if source_system.startswith("system:sesam-node"):
-                if sink_system.startswith("system:sesam-node") and \
-                                         sink["type"] not in ["http_endpoint", "xml_endpoint", "csv_endpoint"]:
-                    if skip_internal_pipes:
-                        logging.info("Skipping internal pipe '%s'", pipe_id)
-                        continue
-                else:
-                    if skip_output_pipes:
-                        logging.info("Skipping output pipe '%s'", pipe_id)
-                        continue
-            else:
+            if source["type"] == "http_endpoint":
+                # No point in running http_endpoint sources!
+                logging.info("Skipping 'http_endpoint' input pipe '%s'", pipe_id)
+                continue
+            elif source["type"] == "embedded":
+                # Embedded sources are input pipes, even if system is the node
+                self.input_pipes[pipe.id] = pipe
                 if skip_input_pipes:
                     logging.info("Skipping input pipe '%s'", pipe_id)
                     continue
+            else:
+                if source_system.startswith("system:sesam-node"):
+                    if sink_system.startswith("system:sesam-node") and \
+                                             sink["type"] not in ["http_endpoint", "xml_endpoint", "csv_endpoint"]:
+                        if skip_internal_pipes:
+                            logging.info("Skipping internal pipe '%s'", pipe_id)
+                            continue
+                    else:
+                        if skip_output_pipes:
+                            logging.info("Skipping output pipe '%s'", pipe_id)
+                            continue
+                else:
+                    self.input_pipes[pipe.id] = pipe
+                    if skip_input_pipes:
+                        logging.info("Skipping input pipe '%s'", pipe_id)
+                        continue
 
             _pipes.append(pipe)
 
@@ -286,107 +299,17 @@ class Runner:
 
         return queues
 
-    def run_pipes(self):
-        """ Old style runner (with queues, async dep tracker etc) """
-        self.stop_and_disable_pipes(self.pipes.values())
-        #self.reset_pipes_and_delete_datasets(self.pipes.values())
-
-        runs = 0
-        finished = False
-        total_processed = -1
-
-        while not finished and runs < 100:
-            runs += 1
-            logger.info("Run #%s..." % runs)
-            self.run_pipes_until_finished("All pipes", self.pipes.values(), sequential=True)
-
-            # Check if finished
-            finished = True
-            for pipe in self.pipes.values():
-                dataset_id = pipe.config["effective"]["sink"].get("dataset")
-                dataset = self.api_connection.get_dataset(dataset_id)
-                if dataset:
-                    dataset_runtime = dataset._raw_jsondata["runtime"]
-                    dataset_queue = dataset_runtime.get("queues", {})
-                    tail = dataset_queue.get("size", 0) - dataset_queue.get("tailer", 0)
-
-                    queues = pipe.runtime["queues"].get("source")
-                    last_run = pipe.runtime["progress"]["last-run"]
-                    queue = 0
-
-                    if isinstance(queues, int):
-                        # bug in queue api, so 1 is actually no queue
-                        queue = 0 if queues == 1 else queues
-                    if isinstance(queues, dict):
-                        for (dep, size) in queues.items():
-                            queue += size
-
-                    if queue + last_run + tail > 0:
-                        logger.info("Not finished yet after run #%s..." % runs)
-                        print("Pipe '%s': %s" % (pipe.id, pipe.runtime["queues"]))
-                        print("Dataset '%s': %s" % (dataset_id, dataset_queue))
-                        finished = False
-                        break
-                else:
-                    logger.info("Dataset '%s' not found! Not finished yet after #%s runs..." % (dataset_id, runs))
-                    finished = False
-                    break
-
-            if not finished:
-                logger.info("Finished run #%s, sleeping for a while to let the tailer task catch up..." % runs)
-
-                prev_queues = self.get_pipe_queues(self.pipes.values())
-
-                i = 0
-                while i < 30: # Max 30 minutes of sleep
-                    time.sleep(30)
-                    new_queues = self.get_pipe_queues(self.pipes.values())
-                    #print(queues)
-                    #print(prev_queues)
-                    if prev_queues == new_queues:
-                        # No more changes, the tailer task is probably done
-                        logger.info("No more queue changes, perhaps the tailer task is done?")
-                        break
-
-                    prev_queues = new_queues
-
-                    # If not, sleep some more
-                    i += 1
-                    time.sleep(30)
-
-                logger.info("The tailer task should be finished by now, rerunning pipes...")
-
-        if not finished:
-            logger.info("Run stopped without finishing...")
-        else:
-            logger.info("Run finished!")
-
-        return total_processed
-
-    def run_pipes_no_deps(self, reset_pipes_and_delete_datasets=False):
-        """ New style runner with sync deps tracker - i.e. it is done when nothing gets processed anymore """
+    def run_pipes_no_deps(self, reset_pipes_and_delete_datasets=False, skip_input_sources=False):
+        """ New style runner with sync deps tracker """
         self.stop_and_disable_pipes(self.pipes.values())
         if reset_pipes_and_delete_datasets:
             self.reset_pipes_and_delete_datasets(self.pipes.values())
 
-        runs = 0
-        finished = False
-        total_processed = -1
-
-        while not finished and runs < 100:
-            runs += 1
-            logger.info("Run #%s..." % runs)
-            total_processed = self.run_pipes_until_finished("All pipes", self.pipes.values(), sequential=True)
-
-            # Check if finished
-            if total_processed == 0:
-                finished = True
-                break
-
-        if not finished:
-            logger.info("Run stopped without finishing after #%s runs..." % runs)
+        if skip_input_sources:
+            pipes = [pipe for pipe in self.pipes.values() if pipe.id not in self.input_pipes]
         else:
-            logger.info("Run finished after #%s runs!" % runs)
+            pipes = self.pipes.values()
+
+        total_processed = self.run_pipes_until_finished("All pipes", pipes, sequential=True)
 
         return total_processed
-

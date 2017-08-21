@@ -7,11 +7,13 @@ import argparse
 import threading
 import sesamclient
 import logging
+import logging.handlers
 import threading
 from datetime import datetime
 from pprint import pformat
 from tarjan import tarjan
 import time
+import os
 
 from graph import Graph
 from runner import Runner
@@ -35,7 +37,12 @@ class SchedulerThread:
             for runner in self._runners:
                 logger.info("Running subgraph #%s (run #%s)...", runner.subgraph, runs)
 
-                total_processed += runner.run_pipes_no_deps(reset_pipes_and_delete_datasets=True)
+                if runs == 0:
+                    # First run; delete datasets, reset and run all pipes
+                    total_processed += runner.run_pipes_no_deps(reset_pipes_and_delete_datasets=True)
+                else:
+                    # All other runs, only run internal pipes
+                    total_processed += runner.run_pipes_no_deps(skip_input_sources=True)
 
             if total_processed == 0:
                 # No entities was processed, we might be done - check queues to be sure
@@ -49,19 +56,31 @@ class SchedulerThread:
 
                 if total_dataset_queue > 0:
                     logger.info("Dataset queues are not empty (was %s) - doing another run..", total_dataset_queue)
-
                     continue
 
                 for runner in self._runners:
                     for queue in runner.get_pipe_queues(runner.pipes.values()):
-                        logger.info("Pipe queues are not empty (was %s) - doing another run..", total_pipe_queue)
-                        total_pipe_queue += queue.get("source", 0)
+                        source_queue = queue.get("source", 0)
+                        if isinstance(source_queue, int):
+                            total_pipe_queue += source_queue
+                        elif isinstance(source_queue, dict):
+                            for key in source_queue:
+                                value = source_queue[key]
+                                if isinstance(value, int):
+                                    total_pipe_queue += source_queue[key]
+                                else:
+                                    raise AssertionError("Don't know what '%s' is" % source_queue)
+                        else:
+                            raise AssertionError("Don't know what '%s' is" % source_queue)
 
-                if total_dataset_queue > 0:
+                if total_pipe_queue > 0:
+                    logger.info("Pipe queues are not empty (was %s) - doing another run..", total_pipe_queue)
                     continue
 
                 # No more entities and the queues are empty - this means we're done
                 finished = True
+            else:
+                logger.info("Processed %s entities in run #%s. Not done yet!", total_processed, runs)
 
             runs += 1
 
@@ -101,6 +120,15 @@ if __name__ == '__main__':
     stdout_handler = logging.StreamHandler()
     stdout_handler.setFormatter(logging.Formatter(format_string))
     logger.addHandler(stdout_handler)
+
+    rotating_logfile_handler = logging.handlers.RotatingFileHandler(
+        os.path.join(os.getcwd(), "bootstrap-scheduler.log"),
+        mode='a',
+        maxBytes=1024*1024*100,
+        backupCount=9,
+        encoding='utf-8', delay=0)
+    rotating_logfile_handler.setFormatter(logging.Formatter(format_string))
+    logger.addHandler(rotating_logfile_handler)
 
     logger.setLevel(logging.DEBUG)
 
