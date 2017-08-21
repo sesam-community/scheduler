@@ -2,6 +2,8 @@
 # Copyright (C) Bouvet ASA - All Rights Reserved.
 # Unauthorized copying of this file, via any medium is strictly prohibited.
 
+from flask import Flask, request, Response
+import json
 import sys
 import argparse
 import threading
@@ -18,13 +20,20 @@ import os
 from graph import Graph
 from runner import Runner
 
+scheduler = None
+headers = None
+
+app = Flask(__name__)
+
 logger = logging.getLogger('bootstrapper-scheduler')
+
 
 class SchedulerThread:
 
     def __init__(self, subgraph_runners):
         self._status = "init"
         self._runners = subgraph_runners
+        self._thread = None
 
     def run(self):
         self._status = "running"
@@ -35,7 +44,7 @@ class SchedulerThread:
             finished = False
             total_processed = 0
             for runner in self._runners:
-                logger.info("Running subgraph #%s (run #%s)...", runner.subgraph, runs)
+                logger.info("Running subgraph #%s of %s - pass #%s...", runner.subgraph, len(self._runners), runs)
 
                 if runs == 0:
                     # First run; delete datasets, reset and run all pipes
@@ -46,7 +55,7 @@ class SchedulerThread:
 
             if total_processed == 0:
                 # No entities was processed, we might be done - check queues to be sure
-                logger.info("No entities processed after run #%s, checking queues...", runs)
+                logger.info("No entities processed after pass #%s, checking queues...", runs)
 
                 total_dataset_queue = 0
                 total_pipe_queue = 0
@@ -74,13 +83,13 @@ class SchedulerThread:
                             raise AssertionError("Don't know what '%s' is" % source_queue)
 
                 if total_pipe_queue > 0:
-                    logger.info("Pipe queues are not empty (was %s) - doing another run..", total_pipe_queue)
+                    logger.info("Pipe queues are not empty (was %s) - doing another pass..", total_pipe_queue)
                     continue
 
                 # No more entities and the queues are empty - this means we're done
                 finished = True
             else:
-                logger.info("Processed %s entities in run #%s. Not done yet!", total_processed, runs)
+                logger.info("Processed a total of %s entities for in pass #%s. Not done yet!", total_processed, runs)
 
             runs += 1
 
@@ -89,9 +98,9 @@ class SchedulerThread:
             self._status = "stopped"
         else:
             if not finished:
-                logger.error("Could not finish after %s runs :(" % runs)
+                logger.error("Could not finish after %s passes :(" % runs)
             else:
-                logger.info("Finished after %s runs :)" % runs)
+                logger.info("Finished after %s passes! :)" % runs)
 
             self._status = "finished"
 
@@ -101,19 +110,72 @@ class SchedulerThread:
         self._thread.start()
 
     def stop(self):
-        self.keep_running = False
-        self._thread.join()
+        if self._thread is not None:
+            self.keep_running = False
+
+            self._thread.join()
+            self._thread = None
 
     @property
     def status(self):
         return self._status
 
 
+@app.route('/start', methods=['POST'])
+def start():
+
+    global scheduler
+
+    if scheduler is None:
+        return Response(status=403, response="Bootstrap scheduler is not ready yet")
+
+    if scheduler.status not in ["running"]:
+        scheduler.stop()
+        scheduler.start()
+        return Response(status=200, response="Bootstrap scheduler started")
+    else:
+        return Response(status=403, response="Bootstrap scheduler is already running")
+
+
+@app.route('/stop', methods=['POST'])
+def stop():
+
+    global scheduler
+
+    if scheduler is None:
+        return Response(status=403, response="Bootstrap scheduler is not ready yet")
+
+    sleep_time = 5
+    timeout = 900
+
+    cumul_time = 0
+    if scheduler.status in ["running"]:
+        scheduler.stop()
+
+        while scheduler.status not in ["stopped", "finished"] and cumul_time > timeout:
+            cumul_time += sleep_time
+            time.sleep(sleep_time)
+
+        if scheduler.status not in ["stopped", "finished"]:
+            return Response(status=500, response="Error! Bootstrap scheduler did not stop within timeout (%ss)" % timeout)
+
+        return Response(status=200, response="Bootstrap scheduler stopped")
+    else:
+        return Response(status=200, response="Bootstrap scheduler is not running")
+
+
+@app.route('/', methods=['GET'])
+def status():
+    global scheduler
+
+    if scheduler is None:
+        return Response(status=200, response=json.dumps({"state": "init"}), mimetype='application/json')
+
+    return Response(status=200, response=json.dumps({"state": scheduler.status}), mimetype='application/json')
+
+
 if __name__ == '__main__':
     # TODO implement scheduler
-
-    global headers
-
     format_string = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 
     # Log to stdout
@@ -130,7 +192,8 @@ if __name__ == '__main__':
     rotating_logfile_handler.setFormatter(logging.Formatter(format_string))
     logger.addHandler(rotating_logfile_handler)
 
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
+    rotating_logfile_handler.propagate = False
 
     parser = argparse.ArgumentParser(description='Service for running a bootstrap scheduler')
 
@@ -145,7 +208,6 @@ if __name__ == '__main__':
     api_connection = sesamclient.Connection(sesamapi_base_url=args.node_url + "api", jwt_auth_token=args.jwt_token, timeout=60*10)
 
     graph = Graph(api_connection)
-    #graph = TestGraph()
 
     # Compute optimal rank
     graph.unvisitNodes()
@@ -171,7 +233,7 @@ if __name__ == '__main__':
     # Compute optimal ranking for all subgraphs using Tarjan's algorithm
 
     for subgraph in range(0, connected_components):
-        logger.info("Processing subgraph #%s..." % subgraph)
+        logger.debug("Processing subgraph #%s..." % subgraph)
 
         g = {}
         for node in [node for node in graph.nodes.values() if node.tag == subgraph]:
@@ -194,15 +256,13 @@ if __name__ == '__main__':
             elif len(s) > 1:
                 pipes.extend(s)
 
-        logger.info("Optimal sequence for subgraph #%s:\n%s" % (subgraph, pformat(pipes)))
+        logger.debug("Optimal sequence for subgraph #%s:\n%s" % (subgraph, pformat(pipes)))
 
         runner = Runner(api_connection=api_connection, pipes=pipes, skip_output_pipes=True)
         runner.subgraph = subgraph
         sub_graph_runners.append(runner)
 
-    # TODO: start scheduler thread
     scheduler = SchedulerThread(sub_graph_runners)
-    scheduler.start()
+    #scheduler.start()
 
-    while scheduler.status not in ["done", "finished"]:
-        time.sleep(10)
+    app.run(debug=True, host='0.0.0.0', port=5001)

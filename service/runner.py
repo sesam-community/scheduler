@@ -113,11 +113,11 @@ class Runner:
         for pipe in pipes:
             pump = pipe.get_pump()
             if "enable" in pump.supported_operations:
-                logger.info("Enabling pipe %s.." % pipe.id)
+                logger.debug("Enabling pipe %s.." % pipe.id)
                 pump.enable()
 
             if "start" in pump.supported_operations:
-                logger.info("Starting pipe %s.." % pipe.id)
+                logger.debug("Starting pipe %s.." % pipe.id)
                 pump.start(operation_parameters=self.pump_params)
 
     def reset_pipes_and_delete_datasets(self, pipes):
@@ -131,17 +131,17 @@ class Runner:
                         sink_datasets = [sink_datasets]
 
                     if sink_datasets:
-                        logger.info("Deleting datasets: %s" % sink_datasets)
+                        logger.debug("Deleting datasets: %s" % sink_datasets)
                         for dataset_id in sink_datasets:
                             dataset = self.api_connection.get_dataset(dataset_id)
                             if dataset:
-                                logger.info("Deleting dataset '%s' in in node.." % dataset_id)
+                                logger.debug("Deleting dataset '%s' in in node.." % dataset_id)
                                 dataset.delete()
                             else:
                                 logger.warning("Failed to delete dataset '%s' in in node "
                                                "- could not find dataset" % dataset_id)
 
-            logger.info("Resetting pipe '%s'.." % pipe.id)
+            logger.debug("Resetting pipe '%s'.." % pipe.id)
             pump = pipe.get_pump()
 
             if "update-last-seen" in pump.supported_operations:
@@ -218,29 +218,29 @@ class Runner:
                                 retries_so_far = retries.get(pipe.id, 1)
                                 if retries_so_far <= 500:  # 5*500 seconds
                                     previous_entities = new_entities
-                                    logger.info("Pipe %s failed, retrying (%s).." % (pipe.id, retries_so_far))
+                                    logger.debug("Pipe %s failed, retrying (%s).." % (pipe.id, retries_so_far))
                                     retries[pipe.id] = retries_so_far + 1
                                     finished = False
                                     pump.start(operation_parameters=self.pump_params)
                                 else:
-                                    logger.info("Pipe %s failed to run even after %s retries, "
+                                    logger.debug("Pipe %s failed to run even after %s retries, "
                                                 "giving up and disabling it..." % (pipe.id, retries_so_far))
                                     self.stop_and_disable_pipes([pipe])
                                     _pipes.remove(pipe)
                             else:
-                                logger.info("Pipe %s failed to run and we're not allowed to start it again! "
+                                logger.debug("Pipe %s failed to run and we're not allowed to start it again! "
                                             "Giving up and disabling it..." % pipe.id)
                                 self.stop_and_disable_pipes([pipe])
                                 _pipes.remove(pipe)
                         else:
-                            logger.info("Pipe %s failed to run for some reason! "
+                            logger.debug("Pipe %s failed to run for some reason! "
                                         "Giving up and disabling it... Reason was:\n%s" % (pipe.id, reason))
                             self.stop_and_disable_pipes([pipe])
                             _pipes.remove(pipe)
                     else:
                         processed = new_entities[pipe.id].get("processed_last_run", 0)
                         total_processed += processed
-                        logger.info("Pipe %s is finished (%s processed), disabling it..." % (pipe.id, processed))
+                        logger.debug("Pipe %s is finished (%s processed), disabling it..." % (pipe.id, processed))
                         self.stop_and_disable_pipes([pipe])
                         _pipes.remove(pipe)
 
@@ -256,12 +256,15 @@ class Runner:
         starttime = time.monotonic()
         processed_entities = 0
         if sequential:
-            logger.info("Running sequential %s" % title.lower())
+            logger.debug("Running sequential %s" % title.lower())
             for pipe in pipes:
+                logger.info("Running pipe '%s'...", pipe.id)
                 processed_entities += self._run_pipes_until_finished([pipe])
             run_time = time.monotonic() - starttime
             entities_per_second = int(processed_entities / run_time)
-            logger.info("Sequential %s test done (%s entities/s)" % (title.lower(), entities_per_second))
+            logger.info("Sequential '%s' run done (%s entities, %s entities/s)" % (title.lower(),
+                                                                                   processed_entities,
+                                                                                   entities_per_second))
             self.stats["Sequential %s" % title.lower()] = {
                 "run_time": run_time,
                 "processed_entities": processed_entities,
@@ -269,11 +272,11 @@ class Runner:
             }
             return processed_entities
         else:
-            logger.info("Running parallel %s" % title.lower())
+            logger.debug("Running parallel %s" % title.lower())
             processed_entities += self._run_pipes_until_finished(pipes)
             run_time = time.monotonic() - starttime
             entities_per_second = int(processed_entities / run_time)
-            logger.info("Parallel %s test done (%s entities/s)" % (title.lower(), entities_per_second))
+            logger.debug("Parallel %s test done (%s entities/s)" % (title.lower(), entities_per_second))
             self.stats["Parallel %s" % title.lower()] = {
                 "run_time": run_time,
                 "processed_entities": processed_entities,
