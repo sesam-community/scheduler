@@ -120,7 +120,15 @@ class Runner:
                 logger.debug("Starting pipe %s.." % pipe.id)
                 pump.start(operation_parameters=self.pump_params)
 
-    def reset_pipes_and_delete_datasets(self, pipes):
+    def reset_pipes(self, pipes):
+        for pipe in pipes:
+            logger.debug("Resetting pipe '%s'.." % pipe.id)
+            pump = pipe.get_pump()
+
+            if "update-last-seen" in pump.supported_operations:
+                pump.unset_last_seen()
+
+    def delete_datasets(self, pipes):
         for pipe in pipes:
             effective_config = pipe.config.get("effective")
             if effective_config:
@@ -140,12 +148,6 @@ class Runner:
                             else:
                                 logger.warning("Failed to delete dataset '%s' in in node "
                                                "- could not find dataset" % dataset_id)
-
-            logger.debug("Resetting pipe '%s'.." % pipe.id)
-            pump = pipe.get_pump()
-
-            if "update-last-seen" in pump.supported_operations:
-                pump.unset_last_seen()
 
     def _get_latest_done_event_from_execution_log(self):
         return self._get_latest_one_of_two_events_from_execution_log("pump-completed",
@@ -216,25 +218,25 @@ class Runner:
                             if "start" in pump.supported_operations:
                                 # We need to retry this one a couple of times - the indexing might not be finished yet
                                 retries_so_far = retries.get(pipe.id, 1)
-                                if retries_so_far <= 500:  # 5*500 seconds
+                                if retries_so_far <= 5:  # 5*500 seconds
                                     previous_entities = new_entities
-                                    logger.debug("Pipe %s failed, retrying (%s).." % (pipe.id, retries_so_far))
+                                    logger.warning("Pipe %s failed, retrying (%s).." % (pipe.id, retries_so_far))
                                     retries[pipe.id] = retries_so_far + 1
                                     finished = False
                                     pump.start(operation_parameters=self.pump_params)
                                 else:
-                                    logger.debug("Pipe %s failed to run even after %s retries, "
-                                                "giving up and disabling it..." % (pipe.id, retries_so_far))
+                                    logger.error("Pipe %s failed to run even after %s retries, "
+                                                 "giving up and disabling it..." % (pipe.id, retries_so_far))
                                     self.stop_and_disable_pipes([pipe])
                                     _pipes.remove(pipe)
                             else:
-                                logger.debug("Pipe %s failed to run and we're not allowed to start it again! "
-                                            "Giving up and disabling it..." % pipe.id)
+                                logger.error("Pipe %s failed to run and we're not allowed to start it again! "
+                                             "Giving up and disabling it..." % pipe.id)
                                 self.stop_and_disable_pipes([pipe])
                                 _pipes.remove(pipe)
                         else:
-                            logger.debug("Pipe %s failed to run for some reason! "
-                                        "Giving up and disabling it... Reason was:\n%s" % (pipe.id, reason))
+                            logger.error("Pipe %s failed to run for some reason! "
+                                         "Giving up and disabling it... Reason was:\n%s" % (pipe.id, reason))
                             self.stop_and_disable_pipes([pipe])
                             _pipes.remove(pipe)
                     else:
@@ -245,7 +247,7 @@ class Runner:
                         _pipes.remove(pipe)
 
             if not finished:
-                time.sleep(5)
+                time.sleep(2)
 
         # Disable pipes before retuning
         self.stop_and_disable_pipes(pipes)
@@ -259,10 +261,14 @@ class Runner:
             logger.debug("Running sequential %s" % title.lower())
             for pipe in pipes:
                 logger.info("Running pipe '%s'...", pipe.id)
-                processed_entities += self._run_pipes_until_finished([pipe])
+                entities_processed = self._run_pipes_until_finished([pipe])
+                if entities_processed > 0:
+                    logger.info("%s entities processed by pipe '%s'", entities_processed, pipe.id)
+
+                processed_entities += entities_processed
             run_time = time.monotonic() - starttime
             entities_per_second = int(processed_entities / run_time)
-            logger.info("Sequential '%s' run done (%s entities, %s entities/s)" % (title.lower(),
+            logger.debug("Sequential '%s' run done (%s entities, %s entities/s)" % (title.lower(),
                                                                                    processed_entities,
                                                                                    entities_per_second))
             self.stats["Sequential %s" % title.lower()] = {
@@ -302,13 +308,24 @@ class Runner:
 
         return queues
 
-    def run_pipes_no_deps(self, reset_pipes_and_delete_datasets=False, skip_input_sources=False):
+    def run_pipes_no_deps(self, reset_pipes=False, delete_datasets=False, skip_input_sources=False):
         """ New style runner with sync deps tracker """
         self.stop_and_disable_pipes(self.pipes.values())
-        if reset_pipes_and_delete_datasets:
-            self.reset_pipes_and_delete_datasets(self.pipes.values())
+        if reset_pipes:
+            logger.info("Resetting '%s' pipes... ", len(self.pipes.values()))
+            self.reset_pipes(self.pipes.values())
+
+            if delete_datasets:
+                logger.info("Deleting datasets for pipes... ")
+                self.delete_datasets(self.pipes.values())
+            else:
+                logger.info("Not deleting datasets in this run...")
+
+        else:
+            logger.info("Not resetting pipes or deleting datasets in this run...")
 
         if skip_input_sources:
+            logger.info("Skipping input sources for this run..")
             pipes = [pipe for pipe in self.pipes.values() if pipe.id not in self.input_pipes]
         else:
             pipes = self.pipes.values()

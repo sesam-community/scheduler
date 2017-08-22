@@ -20,6 +20,8 @@ import os
 from graph import Graph
 from runner import Runner
 
+from pprint import pprint
+
 scheduler = None
 headers = None
 
@@ -34,6 +36,9 @@ class SchedulerThread:
         self._status = "init"
         self._runners = subgraph_runners
         self._thread = None
+        self._reset_pipes = False
+        self._delete_datasets = False
+        self._skip_input_pipes = False
 
     def run(self):
         self._status = "running"
@@ -48,7 +53,9 @@ class SchedulerThread:
 
                 if runs == 0:
                     # First run; delete datasets, reset and run all pipes
-                    total_processed += runner.run_pipes_no_deps(reset_pipes_and_delete_datasets=True)
+                    total_processed += runner.run_pipes_no_deps(reset_pipes=self._reset_pipes,
+                                                                delete_datasets=self._delete_datasets,
+                                                                skip_input_sources=self._skip_input_pipes)
                 else:
                     # All other runs, only run internal pipes
                     total_processed += runner.run_pipes_no_deps(skip_input_sources=True)
@@ -104,8 +111,11 @@ class SchedulerThread:
 
             self._status = "finished"
 
-    def start(self):
+    def start(self, reset_pipes=None, delete_datasets=None, skip_input_pipes=None):
         self.keep_running = True
+        self._reset_pipes = reset_pipes is not None
+        self._delete_datasets = delete_datasets is not None
+        self._skip_input_pipes = skip_input_pipes is not None
         self._thread = threading.Thread(target=self.run, daemon=True)
         self._thread.start()
 
@@ -124,6 +134,13 @@ class SchedulerThread:
 @app.route('/start', methods=['POST'])
 def start():
 
+    reset_pipes = request.args.get('reset_pipes')
+    delete_datasets = request.args.get('delete_datasets')
+    skip_input_pipes = request.args.get('skip_input_pipes')
+
+    if reset_pipes is None and delete_datasets is not None:
+        logger.warning("delete_datasets flag ignored because reset_pipes parameter not set")
+
     global scheduler
 
     if scheduler is None:
@@ -131,7 +148,7 @@ def start():
 
     if scheduler.status not in ["running"]:
         scheduler.stop()
-        scheduler.start()
+        scheduler.start(reset_pipes=reset_pipes, delete_datasets=delete_datasets, skip_input_pipes=skip_input_pipes)
         return Response(status=200, response="Bootstrap scheduler started")
     else:
         return Response(status=403, response="Bootstrap scheduler is already running")
@@ -193,7 +210,7 @@ if __name__ == '__main__':
     logger.addHandler(rotating_logfile_handler)
 
     logger.setLevel(logging.INFO)
-    rotating_logfile_handler.propagate = False
+    logger.propagate = False
 
     parser = argparse.ArgumentParser(description='Service for running a bootstrap scheduler')
 
@@ -242,11 +259,14 @@ if __name__ == '__main__':
 
         dg = tarjan(g)
         dg.reverse()
+
         i = 0
         for s in dg:
             s.reverse()
             dg[i] = [n[5:] for n in s if n.startswith("pipe_")]
             i += 1
+
+        #pprint(dg)
 
         pipes = []
         for s in dg:
