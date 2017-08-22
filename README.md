@@ -1,5 +1,5 @@
 # Bootstrap scheduler
-Scheduler that when triggered runs a project until it stabilizes, then stops. 
+Scheduler that when triggered runs a project until it stabilizes, then stops. The service runs on port 5000.
 
 [![Build Status](https://travis-ci.org/sesam-community/scheduler.svg?branch=master)](https://travis-ci.org/sesam-community/scheduler)
 
@@ -35,8 +35,8 @@ In addition you can change the amount of logging using:
         "name": "Name of microservice",
         "type": "system:microservice",
         "docker": {
-            "image": "sesam-community/scheduler:latest",
-            "port": 5001,
+            "image": "sesamcommunity/scheduler:latest",
+            "port": 5000,
             "memory": 128,
             "environment": {
                 "MASTER_NODE": "https://m1.sesam.cloud",
