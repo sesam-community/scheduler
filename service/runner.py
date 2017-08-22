@@ -312,7 +312,7 @@ class Runner:
         """ New style runner with sync deps tracker """
         self.stop_and_disable_pipes(self.pipes.values())
         if reset_pipes:
-            logger.info("Resetting '%s' pipes... ", len(self.pipes.values()))
+            logger.info("Resetting %s pipes... ", len(self.pipes.values()))
             self.reset_pipes(self.pipes.values())
 
             if delete_datasets:
