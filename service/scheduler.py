@@ -138,6 +138,11 @@ def start():
     delete_datasets = request.args.get('delete_datasets')
     skip_input_pipes = request.args.get('skip_input_pipes')
 
+    log_level = {"INFO": logging.INFO, "DEBUG": logging.DEBUG, "WARN": logging.WARNING,
+                 "ERROR": logging.ERROR}.get(request.args.get('log_level', 'INFO'), logging.INFO)
+
+    logger.setLevel(log_level)
+
     if reset_pipes is None and delete_datasets is not None:
         logger.warning("delete_datasets flag ignored because reset_pipes parameter not set")
 
@@ -200,16 +205,6 @@ if __name__ == '__main__':
     stdout_handler.setFormatter(logging.Formatter(format_string))
     logger.addHandler(stdout_handler)
 
-    rotating_logfile_handler = logging.handlers.RotatingFileHandler(
-        os.path.join(os.getcwd(), "bootstrap-scheduler.log"),
-        mode='a',
-        maxBytes=1024*1024*100,
-        backupCount=9,
-        encoding='utf-8', delay=0)
-    rotating_logfile_handler.setFormatter(logging.Formatter(format_string))
-    logger.addHandler(rotating_logfile_handler)
-
-    logger.setLevel(logging.INFO)
     logger.propagate = False
 
     parser = argparse.ArgumentParser(description='Service for running a bootstrap scheduler')
@@ -220,9 +215,52 @@ if __name__ == '__main__':
     parser.add_argument('-t', dest='jwt_token', required=False,
                         help="JWT token for node")
 
+    parser.add_argument('-d', dest='log_dir', required=False,
+                        help="logs directory")
+
+    parser.add_argument('-l', dest='log_file', required=False,
+                        help="log file")
+
+    parser.add_argument('-L', dest='log_level', required=False, default="INFO",
+                        help="log level")
+
     args = parser.parse_args()
 
-    api_connection = sesamclient.Connection(sesamapi_base_url=args.node_url + "api", jwt_auth_token=args.jwt_token, timeout=60*10)
+    log_level = {"INFO": logging.INFO, "DEBUG": logging.DEBUG, "WARN": logging.WARNING,
+                 "ERROR": logging.ERROR}.get(args.log_level, logging.INFO)
+
+    if args.log_file:
+        log_dir = args.log_dir
+
+        if not log_dir:
+            log_dir = os.getcwd()
+
+        rotating_logfile_handler = logging.handlers.RotatingFileHandler(
+            os.path.join(log_dir, args.log_file),
+            mode='a',
+            maxBytes=1024*1024*100,
+            backupCount=9,
+            encoding='utf-8', delay=0)
+        rotating_logfile_handler.setFormatter(logging.Formatter(format_string))
+        logger.addHandler(rotating_logfile_handler)
+
+    logger.setLevel(log_level)
+
+    node_url = os.environ.get("MASTER_NODE")
+    if not node_url:
+        node_url = args.node_url
+
+    jwt_token = os.environ.get("JWT_TOKEN")
+    if not jwt_token:
+        jwt_token = args.jwt_token
+
+    if jwt_token is None:
+        logger.error("JWT token not set in command line args or environment. Can't run. Exiting.")
+        sys.exit(1)
+
+    logger.info("Master API endpoint is: %s" % node_url + "api")
+
+    api_connection = sesamclient.Connection(sesamapi_base_url=node_url + "api", jwt_auth_token=jwt_token, timeout=60*10)
 
     graph = Graph(api_connection)
 
@@ -266,8 +304,6 @@ if __name__ == '__main__':
             dg[i] = [n[5:] for n in s if n.startswith("pipe_")]
             i += 1
 
-        #pprint(dg)
-
         pipes = []
         for s in dg:
             if len(s) == 1:
@@ -285,4 +321,4 @@ if __name__ == '__main__':
     scheduler = SchedulerThread(sub_graph_runners)
     #scheduler.start()
 
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=False, host='0.0.0.0', port=5001)
