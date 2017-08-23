@@ -8,7 +8,7 @@ Scheduler that when triggered runs a project until it stabilizes, then stops. Th
 GET / returns scheduler state (se example-state.json)
 ```
 {
-  "state" : "init|running|stopped|finished"
+  "state" : "init|running|stopped|failed|success"
 }
 ```
 

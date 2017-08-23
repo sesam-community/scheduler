@@ -98,10 +98,11 @@ class SchedulerThread:
         else:
             if not finished:
                 logger.error("Could not finish after %s passes :(" % runs)
+                self._status = "failed"
             else:
                 logger.info("Finished after %s passes! :)" % runs)
 
-            self._status = "finished"
+                self._status = "success"
 
     def start(self, reset_pipes=None, delete_datasets=None, skip_input_pipes=None):
         self.keep_running = True
@@ -166,11 +167,11 @@ def stop():
     if scheduler.status in ["running"]:
         scheduler.stop()
 
-        while scheduler.status not in ["stopped", "finished"] and cumul_time > timeout:
+        while scheduler.status in ["running"] and cumul_time > timeout:
             cumul_time += sleep_time
             time.sleep(sleep_time)
 
-        if scheduler.status not in ["stopped", "finished"]:
+        if scheduler.status not in ["stopped", "success", "failed"]:
             return Response(status=500, response="Error! Bootstrap scheduler did not stop within timeout (%ss)" % timeout)
 
         return Response(status=200, response="Bootstrap scheduler stopped")
