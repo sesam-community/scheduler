@@ -52,13 +52,13 @@ class SchedulerThread:
                 logger.info("Running subgraph #%s of %s - pass #%s...", runner.subgraph, len(self._runners), runs)
 
                 if runs == 0:
-                    # First run; delete datasets, reset and run all pipes
+                    # First run; delete datasets, reset and run all pipes (so all datasets are created)
                     total_processed += runner.run_pipes_no_deps(reset_pipes=self._reset_pipes,
                                                                 delete_datasets=self._delete_datasets,
                                                                 skip_input_sources=self._skip_input_pipes)
                 else:
-                    # All other runs, only run internal pipes
-                    total_processed += runner.run_pipes_no_deps(skip_input_sources=True)
+                    # All other runs, only run internal pipes and skip any pipes with empty queues
+                    total_processed += runner.run_pipes_no_deps(skip_input_sources=True, skip_empty_queues=True)
 
             if total_processed == 0:
                 # No entities was processed, we might be done - check queues to be sure
@@ -75,19 +75,11 @@ class SchedulerThread:
                     continue
 
                 for runner in self._runners:
-                    for queue in runner.get_pipe_queues(runner.pipes.values()):
-                        source_queue = queue.get("source", 0)
-                        if isinstance(source_queue, int):
-                            total_pipe_queue += source_queue
-                        elif isinstance(source_queue, dict):
-                            for key in source_queue:
-                                value = source_queue[key]
-                                if isinstance(value, int):
-                                    total_pipe_queue += source_queue[key]
-                                else:
-                                    raise AssertionError("Don't know what '%s' is" % source_queue)
-                        else:
-                            raise AssertionError("Don't know what '%s' is" % source_queue)
+                    for pipe in runner.pipes.values():
+                        pipe_queue_size = runner.get_pipe_queue_size(pipe)
+                        if isinstance(pipe_queue_size, int):
+                            # Non-internal sources return None
+                            total_pipe_queue += pipe_queue_size
 
                 if total_pipe_queue > 0:
                     logger.info("Pipe queues are not empty (was %s) - doing another pass..", total_pipe_queue)

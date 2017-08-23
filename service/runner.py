@@ -23,6 +23,7 @@ class Runner:
         self.execution_datasets = {}
         self.stats = {}
         self.input_pipes = {}
+        self.internal_pipes = {}
 
         if profiling:
             self.pump_params = {
@@ -60,6 +61,7 @@ class Runner:
                 if source_system.startswith("system:sesam-node"):
                     if sink_system.startswith("system:sesam-node") and \
                                              sink["type"] not in ["http_endpoint", "xml_endpoint", "csv_endpoint"]:
+                        self.internal_pipes[pipe.id] = pipe
                         if skip_internal_pipes:
                             logging.info("Skipping internal pipe '%s'", pipe_id)
                             continue
@@ -191,8 +193,21 @@ class Runner:
 
         return entities
 
-    def _run_pipes_until_finished(self, pipes):
+    def _run_pipes_until_finished(self, pipes, skip_empty_queues=False):
         _pipes = [p for p in pipes]
+
+        if skip_empty_queues:
+            # We're given permission to check the queue first to see if there is anything to do
+            for pipe in _pipes[:]:
+                pipe_queue_size = self.get_pipe_queue_size(pipe)
+                if isinstance(pipe_queue_size, int) and pipe_queue_size == 0:
+                    # Remove any pipe that has no work to do
+                    logger.info("Nothing to do for pipe '%s', skipping it", pipe.id)
+                    _pipes.remove(pipe)
+
+            if len(_pipes) == 0:
+                return 0
+
         previous_entities = self.get_last_run_entities(pipes)
         total_processed = 0
         self.enable_and_run_pipes(pipes)
@@ -200,6 +215,8 @@ class Runner:
         retries = {}
 
         finished = False
+        sleep_time = 0.05
+
         while not finished:
             # Run until all execution datasets have been updated with either a pump-completed or a pump-failed entity
             new_entities = self.get_last_run_entities(_pipes)
@@ -218,10 +235,11 @@ class Runner:
                             if "start" in pump.supported_operations:
                                 # We need to retry this one a couple of times - the indexing might not be finished yet
                                 retries_so_far = retries.get(pipe.id, 1)
-                                if retries_so_far <= 5:  # 5*500 seconds
+                                if retries_so_far <= 10:  # 5*500 seconds
                                     previous_entities = new_entities
                                     logger.warning("Pipe %s failed, retrying (%s).." % (pipe.id, retries_so_far))
                                     retries[pipe.id] = retries_so_far + 1
+                                    sleep_time += 1.0
                                     finished = False
                                     pump.start(operation_parameters=self.pump_params)
                                 else:
@@ -247,21 +265,21 @@ class Runner:
                         _pipes.remove(pipe)
 
             if not finished:
-                time.sleep(2)
+                time.sleep(sleep_time)
 
         # Disable pipes before retuning
         self.stop_and_disable_pipes(pipes)
 
         return total_processed
 
-    def run_pipes_until_finished(self, title, pipes, sequential=False):
+    def run_pipes_until_finished(self, title, pipes, sequential=False, skip_empty_queues=False):
         starttime = time.monotonic()
         processed_entities = 0
         if sequential:
             logger.debug("Running sequential %s" % title.lower())
             for pipe in pipes:
                 logger.info("Running pipe '%s'...", pipe.id)
-                entities_processed = self._run_pipes_until_finished([pipe])
+                entities_processed = self._run_pipes_until_finished([pipe], skip_empty_queues=skip_empty_queues)
                 if entities_processed > 0:
                     logger.info("%s entities processed by pipe '%s'", entities_processed, pipe.id)
 
@@ -279,7 +297,7 @@ class Runner:
             return processed_entities
         else:
             logger.debug("Running parallel %s" % title.lower())
-            processed_entities += self._run_pipes_until_finished(pipes)
+            processed_entities += self._run_pipes_until_finished(pipes, skip_empty_queues=skip_empty_queues)
             run_time = time.monotonic() - starttime
             entities_per_second = int(processed_entities / run_time)
             logger.debug("Parallel %s test done (%s entities/s)" % (title.lower(), entities_per_second))
@@ -298,6 +316,37 @@ class Runner:
 
         return queues
 
+    def get_pipe_queue_size(self, pipe):
+        effective_config = pipe._raw_jsondata["config"]["effective"]
+
+        source = effective_config.get("source")
+        source_system = source.get("system")
+
+        total_pipe_queue = None
+
+        if source_system.startswith("system:sesam-node") and source["type"] not in ["http_endpoint", "embedded"]:
+            updated_pipe = self.api_connection.get_pipe(pipe.id)
+            source_queue = updated_pipe.runtime["queues"].get("source")
+
+            total_pipe_queue = 0
+
+            if isinstance(source_queue, int):
+                total_pipe_queue = source_queue
+            elif isinstance(source_queue, dict):
+                for key in source_queue:
+                    value = source_queue[key]
+                    if isinstance(value, int):
+                        total_pipe_queue += source_queue[key]
+
+            # Also check the dependency queues
+            dep_queue = updated_pipe.runtime["queues"].get("dependencies", {})
+            for key in dep_queue:
+                value = dep_queue[key]
+                if isinstance(value, int):
+                    total_pipe_queue += dep_queue[key]
+
+        return total_pipe_queue
+
     def get_dataset_queues(self):
         queues = []
         for dataset in self.api_connection.get_datasets():
@@ -308,7 +357,8 @@ class Runner:
 
         return queues
 
-    def run_pipes_no_deps(self, reset_pipes=False, delete_datasets=False, skip_input_sources=False):
+    def run_pipes_no_deps(self, reset_pipes=False, delete_datasets=False, skip_input_sources=False,
+                          skip_empty_queues=False):
         """ New style runner with sync deps tracker """
         self.stop_and_disable_pipes(self.pipes.values())
         if reset_pipes:
@@ -330,6 +380,7 @@ class Runner:
         else:
             pipes = self.pipes.values()
 
-        total_processed = self.run_pipes_until_finished("All pipes", pipes, sequential=True)
+        total_processed = self.run_pipes_until_finished("All pipes", pipes, sequential=True,
+                                                        skip_empty_queues=skip_empty_queues)
 
         return total_processed
