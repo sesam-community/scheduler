@@ -239,11 +239,11 @@ if __name__ == '__main__':
 
     logger.setLevel(log_level)
 
-    node_url = os.environ.get("MASTER_NODE")
+    node_url = os.environ.get("URL")
     if not node_url:
         node_url = args.node_url
 
-    jwt_token = os.environ.get("JWT_TOKEN")
+    jwt_token = os.environ.get("JWT")
     if not jwt_token:
         jwt_token = args.jwt_token
 
