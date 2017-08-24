@@ -203,7 +203,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Service for running a bootstrap scheduler')
 
     parser.add_argument('-n', dest='node_url', required=False,
-                        help="URL to node", default="http://localhost:9042/")
+                        help="URL to node", default="http://localhost:9042/api")
 
     parser.add_argument('-t', dest='jwt_token', required=False,
                         help="JWT token for node")
@@ -251,9 +251,9 @@ if __name__ == '__main__':
         logger.error("JWT token not set in command line args or environment. Can't run. Exiting.")
         sys.exit(1)
 
-    logger.info("Master API endpoint is: %s" % node_url + "api")
+    logger.info("Master API endpoint is: %s" % node_url)
 
-    api_connection = sesamclient.Connection(sesamapi_base_url=node_url + "api", jwt_auth_token=jwt_token, timeout=60*10)
+    api_connection = sesamclient.Connection(sesamapi_base_url=node_url, jwt_auth_token=jwt_token, timeout=60*10)
 
     graph = Graph(api_connection)
 
