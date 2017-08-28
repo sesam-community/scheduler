@@ -40,7 +40,8 @@ In addition you can change the amount of logging using:
             "memory": 128,
             "environment": {
                 "MASTER_NODE": "https://m1.sesam.cloud",
-                "JWT_TOKEN" : "fklrl464nimsnfskfklrl464nimskfklrl464nimsnfskfkfklrl464nimsnfskf4nimsnfskfklrl464n"
+                "JWT_TOKEN" : "fklrl464nimsnfskfklrl464nimskfklrl464nimsnfskfkfklrl464nimsnfskf4nimsnfskfklrl464n",
+                "LOGLEVEL": "INFO"
             }
         }
     }

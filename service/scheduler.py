@@ -224,8 +224,12 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    log_level = os.environ.get("LOGLEVEL")
+    if log_level is None:
+        log_level = args.log_level
+
     log_level = {"INFO": logging.INFO, "DEBUG": logging.DEBUG, "WARN": logging.WARNING,
-                 "ERROR": logging.ERROR}.get(args.log_level, logging.INFO)
+                 "ERROR": logging.ERROR}.get(log_level, logging.INFO)
 
     if args.log_file:
         log_dir = args.log_dir
@@ -241,6 +245,7 @@ if __name__ == '__main__':
             encoding='utf-8', delay=0)
         rotating_logfile_handler.setFormatter(logging.Formatter(format_string))
         logger.addHandler(rotating_logfile_handler)
+
 
     logger.setLevel(log_level)
 
