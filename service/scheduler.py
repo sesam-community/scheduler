@@ -16,6 +16,7 @@ from pprint import pformat
 from tarjan import tarjan
 import time
 import os
+import requests
 
 from graph import Graph
 from runner import Runner
@@ -23,7 +24,7 @@ from runner import Runner
 from pprint import pprint
 
 scheduler = None
-headers = None
+headers = {}
 node_url = None
 jwt_token = None
 
@@ -132,11 +133,107 @@ class SchedulerThread:
         return self._status
 
 
+def reload_and_wipe_microservices(api_connection):
+    for system in api_connection.get_systems():
+        if system.config["effective"].get("type") == "system:microservice":
+            logger.info("Processing microservice '%s'..", system.id)
+
+            response = requests.get(node_url + "/systems/%s/status" % system.id, headers=headers)
+
+            try:
+                response.raise_for_status()
+            except:
+                logger.error("Failed to get status for microservice '%s': %s %s", system.id,
+                             response.text, response.reason)
+                raise
+
+            restart = False
+            old_pid = None
+            status_data = response.json()
+            if status_data:
+                old_pid = status_data.get("pid")
+                restart = status_data.get("running", False)
+
+            if old_pid == os.getpid():
+                logger.info("Skipping reload of microservice '%s' as it matches our own PID (%s)..", system.id, old_pid)
+                continue
+
+            if restart:
+                logger.info("Reloading and wiping running microservice '%s'..", system.id)
+
+                response = requests.post(node_url + "/systems/%s/reload" % system.id,
+                                         headers=headers, params={"delete_data": True})
+
+                try:
+                    response.raise_for_status()
+                except:
+                    logger.error("Failed to reload microservice '%s': %s %s", system.id,
+                                 response.text, response.reason)
+                    raise
+
+                # Wait for the MS to stop
+                stopped = False
+                timeout_delay = 0.1
+                timeout = 30
+
+                while not stopped and timeout > 0:
+                    response = requests.get(node_url + "/systems/%s/status" % system.id, headers=headers)
+
+                    try:
+                        response.raise_for_status()
+                    except:
+                        logger.error("Failed to get status for microservice '%s': %s %s", system.id,
+                                     response.text, response.reason)
+                        raise
+
+                    status_data = response.json()
+                    if status_data:
+                        if not status_data.get("running"):
+                            stopped = True
+
+                    time.sleep(timeout_delay)
+                    timeout -= timeout_delay
+
+                if not stopped:
+                    logger.warning("Timed out waiting for MS '%s' to stop!", system.id)
+
+                reloaded = False
+                timeout = 30
+                while not reloaded and timeout > 0:
+                    response = requests.get(node_url + "/systems/%s/status" % system.id, headers=headers)
+
+                    try:
+                        response.raise_for_status()
+                    except:
+                        logger.error("Failed to get status for microservice '%s': %s %s", system.id,
+                                     response.text, response.reason)
+                        raise
+
+                    status_data = response.json()
+                    if status_data:
+                        new_pid = status_data.get("pid")
+                        reloaded = status_data.get("running", False)
+
+                        if reloaded:
+                            if old_pid == new_pid:
+                                logger.warning("Microservice restarted, but the PID was the same!")
+
+                    time.sleep(timeout_delay)
+                    timeout -= timeout_delay
+
+                if not reloaded:
+                    logger.warning("Timed out waiting for MS '%s' to reload!", system.id)
+
+            else:
+                logger.info("Microservice '%s' isn't running, skipping it...", system.id)
+
+
 @app.route('/start', methods=['POST'])
 def start():
     reset_pipes = request.args.get('reset_pipes')
     delete_datasets = request.args.get('delete_datasets')
     skip_input_pipes = request.args.get('skip_input_pipes')
+    reload_and_wipe_ms = request.args.get('reload_and_wipe_microservices')
 
     log_level = {"INFO": logging.INFO, "DEBUG": logging.DEBUG, "WARN": logging.WARNING,
                  "ERROR": logging.ERROR}.get(request.args.get('log_level', 'INFO'), logging.INFO)
@@ -155,6 +252,9 @@ def start():
             logger.warning("delete_datasets flag ignored because reset_pipes parameter not set")
 
         api_connection = sesamclient.Connection(sesamapi_base_url=node_url, jwt_auth_token=jwt_token, timeout=60*10)
+
+        if reload_and_wipe_ms is not None:
+            reload_and_wipe_microservices(api_connection)
 
         graph = Graph(api_connection)
 
@@ -321,6 +421,8 @@ if __name__ == '__main__':
     if jwt_token is None:
         logger.error("JWT token not set in command line args or environment. Can't run. Exiting.")
         sys.exit(1)
+
+    headers["Authorization"] = "Bearer " + jwt_token
 
     logger.info("Master API endpoint is: %s" % node_url)
 

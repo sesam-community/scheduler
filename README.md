@@ -21,6 +21,8 @@ The /start endpoint takes three request parameters:
 * delete_datasets=true - will delete all internal datasets associated with the pipes before running (only if
   reset_pipes is set to 'true'
 * skip_input_sources=true - will skip all input sources when running the first pass
+* reload_and_wipe_microservices=true - will attempt to reload and wipe the data for all running microservices (except
+  ourselves)
 
 All of these are off by default.
 
