@@ -60,7 +60,8 @@ class Runner:
             else:
                 if source_system.startswith("system:sesam-node"):
                     if sink_system.startswith("system:sesam-node") and \
-                                             sink["type"] not in ["http_endpoint", "xml_endpoint", "csv_endpoint"]:
+                                             sink["type"] not in ["http_endpoint", "xml_endpoint",
+                                                                  "csv_endpoint", "null"]:
                         self.internal_pipes[pipe.id] = pipe
                         if skip_internal_pipes:
                             logging.info("Skipping internal pipe '%s'", pipe_id)
