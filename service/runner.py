@@ -152,6 +152,27 @@ class Runner:
                                 logger.warning("Failed to delete dataset '%s' in in node "
                                                "- could not find dataset" % dataset_id)
 
+
+    def compact_execution_logs(self, pipes):
+        # curl -s -X POST -d ‘operation=schedule-compaction&time_threshold_date=2016-09-17T06:42:50.265403Z&keep_versions=2’
+        # ‘http://localhost:6547/api/datasets/system:pump:workentry-currenttime-with-jira-keys-step8b-has-no-errors-filter'
+
+        for pipe in pipes:
+            execution_dataset_id = "system:pump:" + pipe.id
+            dataset = self.api_connection.get_dataset(execution_dataset_id)
+
+            compaction_params = {
+                "time_threshold_date": datetime.utcnow().isoformat() + "Z",
+                "keep_versions": 2
+            }
+
+            if dataset is not None:
+                logger.info("Scheduling compaction for pump execution dataset for pipe '%s'", pipe.id)
+                dataset.run_operation("schedule-compaction", compaction_params)
+            else:
+                logger.warning("Could not find pump execution dataset for pipe '%s' - ignoring", pipe.id)
+
+
     def _get_latest_done_event_from_execution_log(self):
         return self._get_latest_one_of_two_events_from_execution_log("pump-completed",
                                                                      "pump-failed")
@@ -359,7 +380,7 @@ class Runner:
         return queues
 
     def run_pipes_no_deps(self, reset_pipes=False, delete_datasets=False, skip_input_sources=False,
-                          skip_empty_queues=False):
+                          skip_empty_queues=False, compact_execution_datasets=False):
         """ New style runner with sync deps tracker """
         self.stop_and_disable_pipes(self.pipes.values())
         if reset_pipes:
@@ -380,6 +401,12 @@ class Runner:
             pipes = [pipe for pipe in self.pipes.values() if pipe.id not in self.input_pipes]
         else:
             pipes = self.pipes.values()
+
+        if compact_execution_datasets:
+            logger.info("Scheduling pump execution dataset compaction for pipes... ")
+            self.compact_execution_logs(self.pipes.values())
+        else:
+            logger.info("Not compacting pump execution datasets in this run...")
 
         total_processed = self.run_pipes_until_finished("All pipes", pipes, sequential=True,
                                                         skip_empty_queues=skip_empty_queues)

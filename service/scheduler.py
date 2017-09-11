@@ -62,9 +62,11 @@ class SchedulerThread:
 
                     if runs == 0:
                         # First run; delete datasets, reset and run all pipes (so all datasets are created)
-                        total_processed += runner.run_pipes_no_deps(reset_pipes=self._reset_pipes,
-                                                                    delete_datasets=self._delete_datasets,
-                                                                    skip_input_sources=self._skip_input_pipes)
+                        total_processed += runner.run_pipes_no_deps(
+                            reset_pipes=self._reset_pipes,
+                            delete_datasets=self._delete_datasets,
+                            skip_input_sources=self._skip_input_pipes,
+                            compact_execution_datasets=self._compact_execution_datasets)
                     else:
                         # All other runs, only run internal pipes and skip any pipes with empty queues
                         total_processed += runner.run_pipes_no_deps(skip_input_sources=True, skip_empty_queues=True)
@@ -113,11 +115,12 @@ class SchedulerThread:
 
                 self._status = "success"
 
-    def start(self, reset_pipes=None, delete_datasets=None, skip_input_pipes=None):
+    def start(self, reset_pipes=None, delete_datasets=None, skip_input_pipes=None, compact_execution_datasets=None):
         self.keep_running = True
         self._reset_pipes = reset_pipes is not None
         self._delete_datasets = delete_datasets is not None
         self._skip_input_pipes = skip_input_pipes is not None
+        self._compact_execution_datasets = compact_execution_datasets is not None
         self._thread = threading.Thread(target=self.run, daemon=True)
         self._thread.start()
 
@@ -234,6 +237,7 @@ def start():
     delete_datasets = request.args.get('delete_datasets')
     skip_input_pipes = request.args.get('skip_input_pipes')
     reload_and_wipe_ms = request.args.get('reload_and_wipe_microservices')
+    compact_execution_datasets = request.args.get('compact_execution_datasets')
 
     log_level = {"INFO": logging.INFO, "DEBUG": logging.DEBUG, "WARN": logging.WARNING,
                  "ERROR": logging.ERROR}.get(request.args.get('log_level', 'INFO'), logging.INFO)
@@ -313,7 +317,8 @@ def start():
             sub_graph_runners.append(runner)
 
         scheduler = SchedulerThread(sub_graph_runners)
-        scheduler.start(reset_pipes=reset_pipes, delete_datasets=delete_datasets, skip_input_pipes=skip_input_pipes)
+        scheduler.start(reset_pipes=reset_pipes, delete_datasets=delete_datasets, skip_input_pipes=skip_input_pipes,
+                        compact_execution_datasets=compact_execution_datasets)
         return Response(status=200, response="Bootstrap scheduler started")
     else:
         return Response(status=403, response="Bootstrap scheduler is already running")

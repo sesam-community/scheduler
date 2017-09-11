@@ -19,12 +19,15 @@ The /start endpoint takes three request parameters:
 
 * reset_pipes=true - will reset all pipes before starting
 * delete_datasets=true - will delete all internal datasets associated with the pipes before running (only if
-  reset_pipes is set to 'true'
+  reset_pipes is set
 * skip_input_sources=true - will skip all input sources when running the first pass
 * reload_and_wipe_microservices=true - will attempt to reload and wipe the data for all running microservices (except
   ourselves)
+* compact_execution_datasets=true - will schedule compaction jobs for the pipe execution datasets to keep them from
+  growing too large
 
-All of these are off by default.
+All of these are off by default. Note that this means that the mere inclusion of a parameter means that the corresponding
+flag is "on", the actual value of the parameter is ignored.
 
 In addition you can change the amount of logging using:
 * log_level=INFO - sets the log level when running
