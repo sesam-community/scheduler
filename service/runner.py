@@ -238,6 +238,7 @@ class Runner:
 
         finished = False
         sleep_time = 0.05
+        num_retries = 0
 
         while not finished:
             # Run until all execution datasets have been updated with either a pump-completed or a pump-failed entity
@@ -257,15 +258,15 @@ class Runner:
                             if "start" in pump.supported_operations:
                                 # We need to retry this one a couple of times - the indexing might not be finished yet
                                 retries_so_far = retries.get(pipe.id, 1)
-                                if retries_so_far <= 10:  # 5*500 seconds
+                                if retries_so_far <= num_retries:
                                     previous_entities = new_entities
                                     logger.warning("Pipe %s failed, retrying (%s).." % (pipe.id, retries_so_far))
                                     retries[pipe.id] = retries_so_far + 1
-                                    sleep_time += 1.0
+                                    sleep_time += 1.0 # Wait a little longer each retry
                                     finished = False
                                     pump.start(operation_parameters=self.pump_params)
                                 else:
-                                    logger.error("Pipe %s failed to run even after %s retries, "
+                                    logger.error("Pipe %s failed to run after %s retries, "
                                                  "giving up and disabling it..." % (pipe.id, retries_so_far))
                                     self.stop_and_disable_pipes([pipe])
                                     _pipes.remove(pipe)

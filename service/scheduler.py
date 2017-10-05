@@ -298,8 +298,8 @@ def start():
 
             i = 0
             for s in dg:
-                s.reverse()
-                dg[i] = [n[5:] for n in s if n.startswith("pipe_")]
+                # Sort the connected components so we're sure the run order is deterministic
+                dg[i] = sorted([n[5:] for n in s if n.startswith("pipe_")])
                 i += 1
 
             pipes = []
