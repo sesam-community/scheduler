@@ -237,7 +237,7 @@ class Runner:
         retries = {}
 
         finished = False
-        sleep_time = 0.05
+        sleep_time = 0.001
         num_retries = 0
 
         while not finished:
@@ -295,41 +295,79 @@ class Runner:
 
         return total_processed
 
-    def run_pipes_until_finished(self, title, pipes, sequential=False, skip_empty_queues=False):
+    def _run_pipes_until_finished_api(self, pipes):
+        # Use the new sync pipe runs api
+
+        total_processed = 0
+
+        result = self.api_connection.session.post(self.api_connection.sesamapi_base_url + "/pipes/run-pipes",
+                                                  json=[p.id for p in pipes])
+
+        if result:
+            for pipe_id, pipe_result in result.json().items():
+                if pipe_result["result"] == "completed":
+                    total_processed += pipe_result["status"]["processed_last_run"]
+                else:
+                    logger.warning("Pipe '%s' did not complete successfully. "
+                                   "The reason was: '%s'" % (pipe_id, pipe_result["reason"]))
+        else:
+            logger.error("Failed to run pipes!")
+
+        return total_processed
+
+    def run_pipes_until_finished(self, title, pipes, sequential=False, skip_empty_queues=False, use_new_api=True):
         starttime = time.monotonic()
         processed_entities = 0
-        if sequential:
-            logger.debug("Running sequential %s" % title.lower())
-            for pipe in pipes:
-                logger.info("Running pipe '%s'...", pipe.id)
-                entities_processed = self._run_pipes_until_finished([pipe], skip_empty_queues=skip_empty_queues)
-                if entities_processed > 0:
-                    logger.info("%s entities processed by pipe '%s'", entities_processed, pipe.id)
+        if use_new_api:
+            logger.debug("Running pipes using the run-pipes API")
 
-                processed_entities += entities_processed
+            processed_entities = self._run_pipes_until_finished_api(pipes)
+
             run_time = time.monotonic() - starttime
             entities_per_second = int(processed_entities / run_time)
             logger.debug("Sequential '%s' run done (%s entities, %s entities/s)" % (title.lower(),
                                                                                    processed_entities,
                                                                                    entities_per_second))
-            self.stats["Sequential %s" % title.lower()] = {
+            self.stats["Sequential API %s" % title.lower()] = {
                 "run_time": run_time,
                 "processed_entities": processed_entities,
                 "entities_per_second": entities_per_second
             }
             return processed_entities
+
         else:
-            logger.debug("Running parallel %s" % title.lower())
-            processed_entities += self._run_pipes_until_finished(pipes, skip_empty_queues=skip_empty_queues)
-            run_time = time.monotonic() - starttime
-            entities_per_second = int(processed_entities / run_time)
-            logger.debug("Parallel %s test done (%s entities/s)" % (title.lower(), entities_per_second))
-            self.stats["Parallel %s" % title.lower()] = {
-                "run_time": run_time,
-                "processed_entities": processed_entities,
-                "entities_per_second": entities_per_second
-            }
-            return processed_entities
+            if sequential:
+                logger.debug("Running sequential %s" % title.lower())
+                for pipe in pipes:
+                    logger.info("Running pipe '%s'...", pipe.id)
+                    entities_processed = self._run_pipes_until_finished([pipe], skip_empty_queues=skip_empty_queues)
+                    if entities_processed > 0:
+                        logger.info("%s entities processed by pipe '%s'", entities_processed, pipe.id)
+
+                    processed_entities += entities_processed
+                run_time = time.monotonic() - starttime
+                entities_per_second = int(processed_entities / run_time)
+                logger.debug("Sequential '%s' run done (%s entities, %s entities/s)" % (title.lower(),
+                                                                                       processed_entities,
+                                                                                       entities_per_second))
+                self.stats["Sequential %s" % title.lower()] = {
+                    "run_time": run_time,
+                    "processed_entities": processed_entities,
+                    "entities_per_second": entities_per_second
+                }
+                return processed_entities
+            else:
+                logger.debug("Running parallel %s" % title.lower())
+                processed_entities += self._run_pipes_until_finished(pipes, skip_empty_queues=skip_empty_queues)
+                run_time = time.monotonic() - starttime
+                entities_per_second = int(processed_entities / run_time)
+                logger.debug("Parallel %s test done (%s entities/s)" % (title.lower(), entities_per_second))
+                self.stats["Parallel %s" % title.lower()] = {
+                    "run_time": run_time,
+                    "processed_entities": processed_entities,
+                    "entities_per_second": entities_per_second
+                }
+                return processed_entities
 
     def get_pipe_queues(self, pipes):
         queues = []
