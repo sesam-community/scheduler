@@ -255,7 +255,8 @@ def start():
         if reset_pipes is None and delete_datasets is not None:
             logger.warning("delete_datasets flag ignored because reset_pipes parameter not set")
 
-        api_connection = sesamclient.Connection(sesamapi_base_url=node_url, jwt_auth_token=jwt_token, timeout=60*10)
+        api_connection = sesamclient.Connection(sesamapi_base_url=node_url, jwt_auth_token=jwt_token, timeout=60*10,
+                                                verify_ssl=False)
 
         if reload_and_wipe_ms is not None:
             reload_and_wipe_microservices(api_connection)

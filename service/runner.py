@@ -300,7 +300,7 @@ class Runner:
 
         total_processed = 0
 
-        result = self.api_connection.session.post(self.api_connection.sesamapi_base_url + "/pipes/run-pipes",
+        result = self.api_connection.session.post(self.api_connection.sesamapi_base_url + "/pipes/run-pipes?timeout=10",
                                                   json=[p.id for p in pipes])
 
         if result:
