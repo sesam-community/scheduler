@@ -33,6 +33,9 @@ app = Flask(__name__)
 
 logger = logging.getLogger('bootstrapper-scheduler')
 
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
 
 class SchedulerThread:
 
