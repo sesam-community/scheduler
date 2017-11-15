@@ -51,62 +51,69 @@ class SchedulerThread:
         self._status = "running"
 
         finished = False
+        failed = False
         runs = 0
 
         if not self._runners:
             logger.info("No pipes to run!")
             self._status = "success"
         else:
-            while self.keep_running and not finished and runs < 100:
-                finished = False
-                total_processed = 0
-                for runner in self._runners:
-                    logger.info("Running subgraph #%s of %s - pass #%s...", runner.subgraph, len(self._runners), runs)
-
-                    if runs == 0:
-                        # First run; delete datasets, reset and run all pipes (so all datasets are created)
-                        total_processed += runner.run_pipes_no_deps(
-                            reset_pipes=self._reset_pipes,
-                            delete_datasets=self._delete_datasets,
-                            skip_input_sources=self._skip_input_pipes,
-                            compact_execution_datasets=self._compact_execution_datasets)
-                    else:
-                        # All other runs, only run internal pipes and skip any pipes with empty queues
-                        total_processed += runner.run_pipes_no_deps(skip_input_sources=True, skip_empty_queues=True)
-
-                if total_processed == 0:
-                    # No entities was processed, we might be done - check queues to be sure
-                    logger.info("No entities processed after pass #%s, checking queues...", runs)
-
-                    total_dataset_queue = 0
-                    total_pipe_queue = 0
-
-                    for queue in self._runners[0].get_dataset_queues():
-                        total_dataset_queue += queue.get("size", 0)
-
-                    if total_dataset_queue > 0:
-                        logger.info("Dataset queues are not empty (was %s) - doing another run..", total_dataset_queue)
-                        continue
-
+            try:
+                while self.keep_running and not finished and runs < 100:
+                    finished = False
+                    total_processed = 0
                     for runner in self._runners:
-                        for pipe in runner.pipes.values():
-                            pipe_queue_size = runner.get_pipe_queue_size(pipe)
-                            if isinstance(pipe_queue_size, int):
-                                # Non-internal sources return None
-                                total_pipe_queue += pipe_queue_size
+                        logger.info("Running subgraph #%s of %s - pass #%s...", runner.subgraph, len(self._runners), runs)
 
-                    if total_pipe_queue > 0:
-                        logger.info("Pipe queues are not empty (was %s) - doing another pass..", total_pipe_queue)
-                        continue
+                        if runs == 0:
+                            # First run; delete datasets, reset and run all pipes (so all datasets are created)
+                            total_processed += runner.run_pipes_no_deps(
+                                reset_pipes=self._reset_pipes,
+                                delete_datasets=self._delete_datasets,
+                                skip_input_sources=self._skip_input_pipes,
+                                compact_execution_datasets=self._compact_execution_datasets)
+                        else:
+                            # All other runs, only run internal pipes and skip any pipes with empty queues
+                            total_processed += runner.run_pipes_no_deps(skip_input_sources=True, skip_empty_queues=True)
 
-                    # No more entities and the queues are empty - this means we're done
-                    finished = True
-                else:
-                    logger.info("Processed a total of %s entities for in pass #%s. Not done yet!", total_processed, runs)
+                    if total_processed == 0:
+                        # No entities was processed, we might be done - check queues to be sure
+                        logger.info("No entities processed after pass #%s, checking queues...", runs)
 
-                runs += 1
+                        total_dataset_queue = 0
+                        total_pipe_queue = 0
 
-        if not self.keep_running:
+                        for queue in self._runners[0].get_dataset_queues():
+                            total_dataset_queue += queue.get("size", 0)
+
+                        if total_dataset_queue > 0:
+                            logger.info("Dataset queues are not empty (was %s) - doing another run..", total_dataset_queue)
+                            continue
+
+                        for runner in self._runners:
+                            for pipe in runner.pipes.values():
+                                pipe_queue_size = runner.get_pipe_queue_size(pipe)
+                                if isinstance(pipe_queue_size, int):
+                                    # Non-internal sources return None
+                                    total_pipe_queue += pipe_queue_size
+
+                        if total_pipe_queue > 0:
+                            logger.info("Pipe queues are not empty (was %s) - doing another pass..", total_pipe_queue)
+                            continue
+
+                        # No more entities and the queues are empty - this means we're done
+                        finished = True
+                    else:
+                        logger.info("Processed a total of %s entities for in pass #%s. Not done yet!", total_processed, runs)
+
+                    runs += 1
+            except BaseException as e:
+                failed = True
+                logger.exception("Scheduler failed!")
+
+        if failed:
+            self._status = "failed"
+        elif not self.keep_running:
             logger.info("Task was interrupted!")
             self._status = "stopped"
         else:

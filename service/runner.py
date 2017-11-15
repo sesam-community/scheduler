@@ -168,9 +168,29 @@ class Runner:
 
             if dataset is not None:
                 logger.info("Scheduling compaction for pump execution dataset for pipe '%s'", pipe.id)
-                dataset.run_operation("schedule-compaction", compaction_params)
+
+                retries = 3
+                failed = True
+                while retries > 0:
+                    try:
+                        dataset.run_operation("schedule-compaction", compaction_params)
+                        failed = False
+                        break
+                    except BaseException as e:
+                        logger.warning("Failed to execute compaction for dataset '%s' - retrying..",
+                                       execution_dataset_id)
+                        logger.debug("Reason was '%s'" % repr(e))
+                        time.sleep(2)
+                        retries -= 1
+
+                if failed:
+                    logger.error("Failed to execute compaction for dataset '%s' even after 3 retries - exiting",
+                                 execution_dataset_id)
+                    return False
             else:
                 logger.warning("Could not find pump execution dataset for pipe '%s' - ignoring", pipe.id)
+
+            return True
 
 
     def _get_latest_done_event_from_execution_log(self):
@@ -443,7 +463,8 @@ class Runner:
 
         if compact_execution_datasets:
             logger.info("Scheduling pump execution dataset compaction for pipes... ")
-            self.compact_execution_logs(self.pipes.values())
+            if not self.compact_execution_logs(self.pipes.values()):
+                raise RuntimeError("Execution log compaction failed")
         else:
             logger.info("Not compacting pump execution datasets in this run...")
 
