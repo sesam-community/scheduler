@@ -289,7 +289,13 @@ def start():
 
         graph.unvisitNodes()
 
-        all_runner = Runner(api_connection=api_connection, pipes=[p.id for p in graph.pipes])
+        try:
+            all_runner = Runner(api_connection=api_connection, pipes=[p.id for p in graph.pipes])
+        except BaseException as e:
+            return Response(status=403, response="Failed to read config from the node, can't start scheduler - "
+                                                 "check if the config is valid")
+
+
         all_runner.stop_and_disable_pipes(all_runner.pipes.values())
 
         sub_graph_runners = []
@@ -323,7 +329,12 @@ def start():
 
             logger.debug("Optimal sequence for subgraph #%s:\n%s" % (subgraph, pformat(pipes)))
 
-            runner = Runner(api_connection=api_connection, pipes=pipes, skip_output_pipes=True)
+            try:
+                runner = Runner(api_connection=api_connection, pipes=pipes, skip_output_pipes=True)
+            except BaseException as e:
+                return Response(status=403, response="Failed to read config from the node, can't start scheduler - "
+                                                     "check if the config is valid")
+
             runner.subgraph = subgraph
             sub_graph_runners.append(runner)
 
