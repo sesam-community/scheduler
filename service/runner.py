@@ -184,9 +184,9 @@ class Runner:
                         retries -= 1
 
                 if failed:
-                    logger.error("Failed to execute compaction for dataset '%s' even after 3 retries - exiting",
-                                 execution_dataset_id)
-                    return False
+                    logger.warning("Failed to execute compaction for dataset '%s' even after 3 retries - skipping it",
+                                   execution_dataset_id)
+                    return True
             else:
                 logger.warning("Could not find pump execution dataset for pipe '%s' - ignoring", pipe.id)
 
