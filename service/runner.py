@@ -190,7 +190,7 @@ class Runner:
             else:
                 logger.warning("Could not find pump execution dataset for pipe '%s' - ignoring", pipe.id)
 
-            return True
+        return True
 
 
     def _get_latest_done_event_from_execution_log(self):
