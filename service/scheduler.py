@@ -292,8 +292,8 @@ def start():
         try:
             all_runner = Runner(api_connection=api_connection, pipes=[p.id for p in graph.pipes])
         except BaseException as e:
-            return Response(status=403, response="Failed to read config from the node, can't start scheduler - "
-                                                 "check if the config is valid")
+            return Response(status=403, response="\n\nFailed to read config from the node, can't start scheduler - "
+                                                 "check if the config is valid\n\n")
 
 
         all_runner.stop_and_disable_pipes(all_runner.pipes.values())
