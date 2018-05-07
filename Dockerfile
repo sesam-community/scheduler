@@ -36,6 +36,8 @@ rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 RUN curl -sSL https://bootstrap.pypa.io/get-pip.py | python3
 
+RUN pip3 install pip==9.0.3
+
 RUN pip3 install --no-cache-dir cython
 
 RUN \
