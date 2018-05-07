@@ -457,7 +457,11 @@ class Runner:
 
         if skip_input_sources:
             logger.info("Skipping input sources for this run..")
-            pipes = [pipe for pipe in self.pipes.values() if pipe.id not in self.input_pipes]
+
+            # Note that we can't skip input pipes which has dependencies (hops to other datasets) as the output might
+            # change at some point when the dependent dataset has been populated
+            pipes = [pipe for pipe in self.pipes.values()
+                     if pipe.id not in self.input_pipes or len(pipe.runtime.get("dependencies", [])) > 0]
         else:
             pipes = self.pipes.values()
 
