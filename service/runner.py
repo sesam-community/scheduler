@@ -460,8 +460,17 @@ class Runner:
 
             # Note that we can't skip input pipes which has dependencies (hops to other datasets) as the output might
             # change at some point when the dependent dataset has been populated
-            pipes = [pipe for pipe in self.pipes.values()
-                     if pipe.id not in self.input_pipes or len(pipe.runtime.get("dependencies", [])) > 0]
+            pipes = []
+            for pipe in self.pipes.values():
+                if pipe.id in self.input_pipes:
+                    logger.info("Checking if we can skip input pipe '%s'..." % pipe.id)
+                    if len(pipe.runtime.get("dependencies", [])) > 0:
+                        logger.info("Can't skip input pipe '%s' because it has dependencies!" % pipe.id)
+                        pipes.append(pipe)
+                    else:
+                        logger.info("Skipping input pipe '%s' as it has no dependencies\n%s" % (pipe.id, repr(pipe.runtime)))
+                else:
+                    pipes.append(pipe)
         else:
             pipes = self.pipes.values()
 
