@@ -464,14 +464,13 @@ class Runner:
             for pipe in self.pipes.values():
                 if pipe.id in self.input_pipes:
                     logger.info("Checking if we can skip input pipe '%s'..." % pipe.id)
-                    if len(pipe.runtime.get("dependencies", [])) > 0:
-                        logger.info("Can't skip input pipe '%s' because it has dependencies!" % pipe.id)
+                    if not pipe.runtime.get("success", False) and len(pipe.runtime.get("dependencies", [])) > 0 and \
+                                    pipe.runtime.get("last-message", "").find("Pipe is not ready: Index") > -1:
+                        logger.info("Can't skip input pipe '%s' because it has dependencies and has "
+                                    "not been able to run yet!" % pipe.id)
                         pipes.append(pipe)
                     else:
-                        logger.info("Skipping input pipe '%s' as it has no dependencies" % pipe.id)
-                        #logger.info("Type: %s" % repr(type(pipe)))
-                        #logger.info("Pipe: %s" % repr(pipe))
-                        #logger.info("Raw json:\n%s" % repr(pipe._raw_jsondata))
+                        logger.info("Skipping input pipe '%s' as it has no dependencies or has already run" % pipe.id)
                 else:
                     pipes.append(pipe)
         else:
