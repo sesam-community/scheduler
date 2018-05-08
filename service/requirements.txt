@@ -1,4 +1,4 @@
 Flask==0.11
 tarjan==0.2.3.2
-sesamclient==0.2.49
+sesamclient==0.2.60
 requests==2.10.0
