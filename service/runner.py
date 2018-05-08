@@ -469,9 +469,9 @@ class Runner:
                         pipes.append(pipe)
                     else:
                         logger.info("Skipping input pipe '%s' as it has no dependencies" % pipe.id)
-                        logger.info("Type: %s" % repr(type(pipe)))
-                        logger.info("Pipe: %s" % repr(pipe))
-                        logger.info("Raw json:\n%s" % repr(pipe._raw_jsondata))
+                        #logger.info("Type: %s" % repr(type(pipe)))
+                        #logger.info("Pipe: %s" % repr(pipe))
+                        #logger.info("Raw json:\n%s" % repr(pipe._raw_jsondata))
                 else:
                     pipes.append(pipe)
         else:
