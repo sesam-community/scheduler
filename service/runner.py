@@ -84,6 +84,16 @@ class Runner:
 
     def stop_and_disable_pipes(self, pipes):
         for pipe in pipes:
+
+            effective_config = pipe._raw_jsondata["config"]["effective"]
+
+            sink = effective_config.get("sink")
+
+            # Skip disabling publisher pipes
+            if sink["type"] in ["http_endpoint", "xml_endpoint", "csv_endpoint", "null"]:
+                logger.info("Skipping disabling endpoint/published pipe '%s'.." % pipe.id)
+                return
+
             pump = pipe.get_pump()
             # Stop the pipe
             if "stop" in pump.supported_operations:
