@@ -90,9 +90,9 @@ class Runner:
             sink = effective_config.get("sink")
 
             # Skip disabling publisher pipes
-            if sink["type"] in ["http_endpoint", "xml_endpoint", "csv_endpoint", "null"]:
+            if sink["type"] in ["http_endpoint", "xml_endpoint", "csv_endpoint", "excel_endpoint", "null"]:
                 logger.info("Skipping disabling endpoint/published pipe '%s'.." % pipe.id)
-                return
+                continue
 
             pump = pipe.get_pump()
             # Stop the pipe
@@ -100,6 +100,7 @@ class Runner:
                 pump.stop()
 
             if "disable" in pump.supported_operations:
+                logger.info("Disabling pipe '%s'.." % pipe.id)
                 pump.disable()
             else:
                 logger.warning("Could not disable pump for pipe '%s'! Is it set to manual?" % pipe.id)
@@ -201,11 +202,6 @@ class Runner:
                 logger.warning("Could not find pump execution dataset for pipe '%s' - ignoring", pipe.id)
 
         return True
-
-
-    def _get_latest_done_event_from_execution_log(self):
-        return self._get_latest_one_of_two_events_from_execution_log("pump-completed",
-                                                                     "pump-failed")
 
     def _get_latest_one_of_two_events_from_execution_log(self, dataset, one, two):
         first_event = dataset.get_entity(one)
