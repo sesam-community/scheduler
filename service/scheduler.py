@@ -59,6 +59,7 @@ class SchedulerThread:
             self._status = "success"
         else:
             try:
+                zero_runs = 0
                 while self.keep_running and not finished and runs < 100:
                     finished = False
                     total_processed = 0
@@ -77,8 +78,14 @@ class SchedulerThread:
                             total_processed += runner.run_pipes_no_deps(skip_input_sources=True, skip_empty_queues=True)
 
                     if total_processed == 0:
-                        # No entities was processed, we might be done - check queues to be sure
-                        logger.info("No entities processed after pass #%s, checking queues...", runs)
+                        zero_runs += 1
+
+                        if zero_runs < 3:
+                            # Run a couple of times more to be completely sure that the queues are updated
+                            continue
+
+                        # No entities was processed after a qhile, we might be done - check queues to be sure
+                        logger.info("Still no entities processed after pass #%s, checking queues...", runs)
 
                         total_dataset_queue = 0
                         total_pipe_queue = 0
@@ -105,6 +112,7 @@ class SchedulerThread:
                         finished = True
                     else:
                         logger.info("Processed a total of %s entities for in pass #%s. Not done yet!", total_processed, runs)
+                        zero_runs = 0
 
                     runs += 1
             except BaseException as e:

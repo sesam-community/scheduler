@@ -423,14 +423,14 @@ class Runner:
                 for key in source_queue:
                     value = source_queue[key]
                     if isinstance(value, int):
-                        total_pipe_queue += source_queue[key]
+                        total_pipe_queue += value
 
             # Also check the dependency queues
             dep_queue = updated_pipe.runtime["queues"].get("dependencies", {})
             for key in dep_queue:
                 value = dep_queue[key]
                 if isinstance(value, int):
-                    total_pipe_queue += dep_queue[key]
+                    total_pipe_queue += value
 
         return total_pipe_queue
 
