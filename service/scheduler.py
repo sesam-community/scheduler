@@ -52,7 +52,7 @@ class SchedulerThread:
 
         finished = False
         failed = False
-        runs = 0
+        runs = -1
 
         if not self._runners:
             logger.info("No pipes to run!")
@@ -63,6 +63,7 @@ class SchedulerThread:
                 while self.keep_running and not finished and runs < 100:
                     finished = False
                     total_processed = 0
+                    runs += 1
                     for runner in self._runners:
                         logger.info("Running subgraph #%s of %s - pass #%s...", runner.subgraph, len(self._runners), runs)
 
@@ -80,11 +81,12 @@ class SchedulerThread:
                     if total_processed == 0:
                         zero_runs += 1
 
-                        if zero_runs < 3:
+                        if zero_runs <= 5:
                             # Run a couple of times more to be completely sure that the queues are updated
+                            logger.info("Rerunning pass just in case (%s of 3)" % zero_runs)
                             continue
 
-                        # No entities was processed after a qhile, we might be done - check queues to be sure
+                        # No entities was processed after a while, we might be done - check queues to be sure
                         logger.info("Still no entities processed after pass #%s, checking queues...", runs)
 
                         total_dataset_queue = 0
@@ -114,7 +116,6 @@ class SchedulerThread:
                         logger.info("Processed a total of %s entities for in pass #%s. Not done yet!", total_processed, runs)
                         zero_runs = 0
 
-                    runs += 1
             except BaseException as e:
                 failed = True
                 logger.exception("Scheduler failed!")
