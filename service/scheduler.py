@@ -249,6 +249,27 @@ def reload_and_wipe_microservices(api_connection):
                 logger.info("Microservice '%s' isn't running, skipping it...", system.id)
 
 
+def turn_on_execution_logging(api_connection):
+    """ When running CI tests we always want to fully log the execution of pipes """
+    for pipe in api_connection.get_pipes():
+        original_config = pipe._raw_jsondata["config"]["original"]
+
+        if "pump" in original_config:
+            config_changed = False
+
+            if "log_events_noop_runs" in original_config["pump"]:
+                config_changed = True
+                original_config["pump"].pop("log_events_noop_runs")
+
+            if "log_events_noop_runs_changes_only" in original_config["pump"]:
+                config_changed = True
+                original_config["pump"].pop("log_events_noop_runs_changes_only")
+
+            if config_changed:
+                # Save the pipe without these unwanted execution log flags
+                pipe.modify(original_config)
+
+
 @app.route('/start', methods=['POST'])
 def start():
     reset_pipes = request.args.get('reset_pipes')
@@ -280,6 +301,8 @@ def start():
             reload_and_wipe_microservices(api_connection)
 
         graph = Graph(api_connection)
+
+        turn_on_execution_logging(api_connection)
 
         # Compute optimal rank
         graph.unvisitNodes()
