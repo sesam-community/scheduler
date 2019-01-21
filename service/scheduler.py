@@ -469,9 +469,11 @@ if __name__ == '__main__':
 
     logger.setLevel(log_level)
 
-    node_url = os.environ.get("URL")
-    if not node_url:
-        node_url = args.node_url
+#    node_url = os.environ.get("URL")
+#    if not node_url:
+#        node_url = args.node_url
+
+    node_url = "http://sesam-node:8042/api"
 
     jwt_token = os.environ.get("JWT")
     if not jwt_token:
