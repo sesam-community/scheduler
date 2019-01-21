@@ -81,7 +81,7 @@ class SchedulerThread:
                     if total_processed == 0:
                         zero_runs += 1
 
-                        if zero_runs <= 5:
+                        if zero_runs <= 3:
                             # Run a couple of times more to be completely sure that the queues are updated
                             logger.info("Rerunning pass just in case (%s of 3)" % zero_runs)
                             continue
