@@ -28,6 +28,7 @@ headers = {}
 node_url = None
 jwt_token = None
 
+DEFAULT_ZERO_RUNS = 3
 
 app = Flask(__name__)
 
@@ -56,6 +57,7 @@ class SchedulerThread:
 
         if not self._runners:
             logger.info("No pipes to run!")
+            logger.info("No pipes to run!")
             self._status = "success"
         else:
             try:
@@ -70,6 +72,7 @@ class SchedulerThread:
                         if runs == 0:
                             # First run; delete datasets, reset and run all pipes (so all datasets are created)
                             total_processed += runner.run_pipes_no_deps(
+                                disable_pipes=True,
                                 reset_pipes=self._reset_pipes,
                                 delete_datasets=self._delete_datasets,
                                 skip_input_sources=self._skip_input_pipes,
@@ -81,7 +84,7 @@ class SchedulerThread:
                     if total_processed == 0:
                         zero_runs += 1
 
-                        if zero_runs <= 3:
+                        if zero_runs <= self._zero_runs:
                             # Run a couple of times more to be completely sure that the queues are updated
                             logger.info("Rerunning pass just in case (%s of 3)" % zero_runs)
                             continue
@@ -134,8 +137,10 @@ class SchedulerThread:
 
                 self._status = "success"
 
-    def start(self, reset_pipes=None, delete_datasets=None, skip_input_pipes=None, compact_execution_datasets=None):
+    def start(self, reset_pipes=None, delete_datasets=None, skip_input_pipes=None, compact_execution_datasets=None,
+              zero_runs=DEFAULT_ZERO_RUNS):
         self.keep_running = True
+        self._zero_runs = zero_runs
         self._reset_pipes = reset_pipes is not None
         self._delete_datasets = delete_datasets is not None
         self._skip_input_pipes = skip_input_pipes is not None
@@ -274,6 +279,7 @@ def turn_on_execution_logging(api_connection):
 @app.route('/start', methods=['POST'])
 def start():
     reset_pipes = request.args.get('reset_pipes')
+    zero_runs = int(request.args.get("zero_runs", DEFAULT_ZERO_RUNS))
     delete_datasets = request.args.get('delete_datasets')
     skip_input_pipes = request.args.get('skip_input_pipes')
     reload_and_wipe_ms = request.args.get('reload_and_wipe_microservices')
@@ -299,9 +305,12 @@ def start():
                                                 verify_ssl=False)
 
         if reload_and_wipe_ms is not None:
+            logger.info("Wiping microservices...")
             reload_and_wipe_microservices(api_connection)
 
+        logger.info("Building graph over pipes and datasets...")
         graph = Graph(api_connection)
+        logger.info("Graph built: %s nodes" % len(graph.nodes))
 
         turn_on_execution_logging(api_connection)
 
@@ -327,8 +336,6 @@ def start():
             logger.exception("Failed to read config from the node - check if config is valid")
             return Response(status=403, response="\n\nFailed to read config from the node, can't start scheduler - "
                                                  "check if the config is valid\n\nThe exception was: \n%s" % repr(e))
-
-        all_runner.stop_and_disable_pipes(all_runner.pipes.values())
 
         sub_graph_runners = []
 
@@ -372,7 +379,7 @@ def start():
 
         scheduler = SchedulerThread(sub_graph_runners)
         scheduler.start(reset_pipes=reset_pipes, delete_datasets=delete_datasets, skip_input_pipes=skip_input_pipes,
-                        compact_execution_datasets=compact_execution_datasets)
+                        compact_execution_datasets=compact_execution_datasets, zero_runs=zero_runs)
         return Response(status=200, response="Bootstrap scheduler started")
     else:
         return Response(status=403, response="Bootstrap scheduler is already running")
@@ -469,11 +476,12 @@ if __name__ == '__main__':
 
     logger.setLevel(log_level)
 
-#    node_url = os.environ.get("URL")
-#    if not node_url:
-#        node_url = args.node_url
-
-    node_url = "http://sesam-node:8042/api"
+    if os.environ.get("SESAM_NOT_IN_DOCKER") is not None:
+        node_url = os.environ.get("URL")
+        if not node_url:
+            node_url = args.node_url
+    else:
+        node_url = "http://sesam-node:8042/api"
 
     jwt_token = os.environ.get("JWT")
     if not jwt_token:
