@@ -57,7 +57,6 @@ class SchedulerThread:
 
         if not self._runners:
             logger.info("No pipes to run!")
-            logger.info("No pipes to run!")
             self._status = "success"
         else:
             try:
