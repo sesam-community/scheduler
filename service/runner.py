@@ -123,10 +123,10 @@ class Runner:
             else:
                 logger.error("Could not start pump for pipe '%s'!" % pipe.id)
 
-    def enable_and_run_pipes(self, pipes):
+    def enable_and_run_pipes(self, pipes, disable_pipes=False):
         for pipe in pipes:
             pump = pipe.get_pump()
-            if "enable" in pump.supported_operations:
+            if disable_pipes and "enable" in pump.supported_operations:
                 logger.debug("Enabling pipe %s.." % pipe.id)
                 pump.enable()
 
@@ -241,7 +241,7 @@ class Runner:
 
         return entities
 
-    def _run_pipes_until_finished(self, pipes, skip_empty_queues=False):
+    def _run_pipes_until_finished(self, pipes, skip_empty_queues=False, disable_pipes=False):
         _pipes = [p for p in pipes]
 
         if skip_empty_queues:
@@ -258,7 +258,7 @@ class Runner:
 
         previous_entities = self.get_last_run_entities(pipes)
         total_processed = 0
-        self.enable_and_run_pipes(pipes)
+        self.enable_and_run_pipes(pipes, disable_pipes=disable_pipes)
 
         retries = {}
 
@@ -299,30 +299,36 @@ class Runner:
                             else:
                                 logger.error("Pipe %s failed to run and we're not allowed to start it again! "
                                              "Giving up and disabling it..." % pipe.id)
-                                self.stop_and_disable_pipes([pipe])
+                                if disable_pipes:
+                                    self.stop_and_disable_pipes([pipe])
                                 _pipes.remove(pipe)
                         else:
                             logger.error("Pipe %s failed to run for some reason! "
                                          "Giving up and disabling it... Reason was:\n%s" % (pipe.id, reason))
-                            self.stop_and_disable_pipes([pipe])
+                            if disable_pipes:
+                                self.stop_and_disable_pipes([pipe])
                             _pipes.remove(pipe)
                     else:
                         processed = new_entities[pipe.id].get("processed_last_run", 0)
                         total_processed += processed
                         logger.debug("Pipe %s is finished (%s processed), disabling it..." % (pipe.id, processed))
-                        self.stop_and_disable_pipes([pipe])
+                        if disable_pipes:
+                            self.stop_and_disable_pipes([pipe])
                         _pipes.remove(pipe)
 
             if not finished:
                 time.sleep(sleep_time)
 
         # Disable pipes before retuning
-        self.stop_and_disable_pipes(pipes)
+        if disable_pipes:
+            self.stop_and_disable_pipes(pipes)
 
         return total_processed
 
     def _run_pipes_until_finished_api(self, pipes):
         # Use the new sync pipe runs api
+
+        logger.info("Running %s pipes using synchronous API.." % len(pipes))
 
         total_processed = 0
 
@@ -341,7 +347,8 @@ class Runner:
 
         return total_processed
 
-    def run_pipes_until_finished(self, title, pipes, sequential=False, skip_empty_queues=False, use_new_api=True):
+    def run_pipes_until_finished(self, title, pipes, sequential=False, skip_empty_queues=False, use_new_api=True,
+                                 disable_pipes=False):
         starttime = time.monotonic()
         processed_entities = 0
         if use_new_api:
@@ -366,7 +373,8 @@ class Runner:
                 logger.debug("Running sequential %s" % title.lower())
                 for pipe in pipes:
                     logger.info("Running pipe '%s'...", pipe.id)
-                    entities_processed = self._run_pipes_until_finished([pipe], skip_empty_queues=skip_empty_queues)
+                    entities_processed = self._run_pipes_until_finished([pipe], skip_empty_queues=skip_empty_queues,
+                                                                        disable_pipes=disable_pipes)
                     if entities_processed > 0:
                         logger.info("%s entities processed by pipe '%s'", entities_processed, pipe.id)
 
@@ -384,7 +392,8 @@ class Runner:
                 return processed_entities
             else:
                 logger.debug("Running parallel %s" % title.lower())
-                processed_entities += self._run_pipes_until_finished(pipes, skip_empty_queues=skip_empty_queues)
+                processed_entities += self._run_pipes_until_finished(pipes, skip_empty_queues=skip_empty_queues,
+                                                                     disable_pipes=disable_pipes)
                 run_time = time.monotonic() - starttime
                 entities_per_second = int(processed_entities / run_time)
                 logger.debug("Parallel %s test done (%s entities/s)" % (title.lower(), entities_per_second))
@@ -445,9 +454,11 @@ class Runner:
         return queues
 
     def run_pipes_no_deps(self, reset_pipes=False, delete_datasets=False, skip_input_sources=False,
-                          skip_empty_queues=False, compact_execution_datasets=False):
+                          skip_empty_queues=False, compact_execution_datasets=False, disable_pipes=False):
         """ New style runner with sync deps tracker """
-        self.stop_and_disable_pipes(self.pipes.values())
+        if disable_pipes:
+            self.stop_and_disable_pipes(self.pipes.values())
+
         if reset_pipes:
             logger.info("Resetting %s pipes... ", len(self.pipes.values()))
             self.reset_pipes(self.pipes.values())
@@ -490,6 +501,7 @@ class Runner:
             logger.info("Not compacting pump execution datasets in this run...")
 
         total_processed = self.run_pipes_until_finished("All pipes", pipes, sequential=True,
-                                                        skip_empty_queues=skip_empty_queues)
+                                                        skip_empty_queues=skip_empty_queues,
+                                                        disable_pipes=disable_pipes)
 
         return total_processed
