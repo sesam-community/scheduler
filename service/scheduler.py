@@ -29,6 +29,7 @@ node_url = None
 jwt_token = None
 
 DEFAULT_ZERO_RUNS = 3
+DEFAULT_SCHEDULER_PORT = 5000
 
 app = Flask(__name__)
 
@@ -53,7 +54,7 @@ class SchedulerThread:
 
         finished = False
         failed = False
-        runs = -1
+        runs = 0
 
         if not self._runners:
             logger.info("No pipes to run!")
@@ -63,33 +64,36 @@ class SchedulerThread:
                 zero_runs = 0
                 while self.keep_running and not finished and runs < 100:
                     finished = False
-                    total_processed = 0
+                    total_changed = 0
                     runs += 1
-                    for runner in self._runners:
-                        logger.info("Running subgraph #%s of %s - pass #%s...", runner.subgraph, len(self._runners), runs)
+                    logger.info("Running pass #%s (%d subgraphs)...", runs, len(self._runners))
 
-                        if runs == 0:
+                    for runner in self._runners:
+                        logger.debug("Running subgraph #%s of %s - pass #%s...", runner.subgraph,
+                                     len(self._runners), runs)
+
+                        if runs == 1:
                             # First run; delete datasets, reset and run all pipes (so all datasets are created)
-                            total_processed += runner.run_pipes_no_deps(
-                                disable_pipes=True,
+                            total_changed += runner.run_pipes_no_deps(
+                                disable_pipes=self._disable_pipes,
                                 reset_pipes=self._reset_pipes,
                                 delete_datasets=self._delete_datasets,
                                 skip_input_sources=self._skip_input_pipes,
                                 compact_execution_datasets=self._compact_execution_datasets)
                         else:
                             # All other runs, only run internal pipes and skip any pipes with empty queues
-                            total_processed += runner.run_pipes_no_deps(skip_input_sources=True, skip_empty_queues=True)
+                            total_changed += runner.run_pipes_no_deps(skip_input_sources=True, skip_empty_queues=True)
 
-                    if total_processed == 0:
+                    if total_changed == 0:
                         zero_runs += 1
 
-                        if zero_runs <= self._zero_runs:
+                        if zero_runs < self._zero_runs:
                             # Run a couple of times more to be completely sure that the queues are updated
-                            logger.info("Rerunning pass just in case (%s of 3)" % zero_runs)
+                            logger.info("Rerunning pass just in case (%s of %s)" % (zero_runs, self._zero_runs))
                             continue
 
                         # No entities was processed after a while, we might be done - check queues to be sure
-                        logger.info("Still no entities processed after pass #%s, checking queues...", runs)
+                        logger.info("No entities changed after pass #%s, checking queues...", runs)
 
                         total_dataset_queue = 0
                         total_pipe_queue = 0
@@ -112,10 +116,12 @@ class SchedulerThread:
                             logger.info("Pipe queues are not empty (was %s) - doing another pass..", total_pipe_queue)
                             continue
 
+                        logger.info("Pipe queues are empty, nothing more do do")
+
                         # No more entities and the queues are empty - this means we're done
                         finished = True
                     else:
-                        logger.info("Processed a total of %s entities for in pass #%s. Not done yet!", total_processed, runs)
+                        logger.info("A total of %s entities changed in pass #%s. We're not done yet!", total_changed, runs)
                         zero_runs = 0
 
             except BaseException as e:
@@ -137,9 +143,10 @@ class SchedulerThread:
                 self._status = "success"
 
     def start(self, reset_pipes=None, delete_datasets=None, skip_input_pipes=None, compact_execution_datasets=None,
-              zero_runs=DEFAULT_ZERO_RUNS):
+              zero_runs=DEFAULT_ZERO_RUNS, disable_pipes=None):
         self.keep_running = True
         self._zero_runs = zero_runs
+        self._disable_pipes = disable_pipes is True
         self._reset_pipes = reset_pipes is not None
         self._delete_datasets = delete_datasets is not None
         self._skip_input_pipes = skip_input_pipes is not None
@@ -254,30 +261,10 @@ def reload_and_wipe_microservices(api_connection):
                 logger.info("Microservice '%s' isn't running, skipping it...", system.id)
 
 
-def turn_on_execution_logging(api_connection):
-    """ When running CI tests we always want to fully log the execution of pipes """
-    for pipe in api_connection.get_pipes():
-        original_config = pipe._raw_jsondata["config"]["original"]
-
-        if "pump" in original_config:
-            config_changed = False
-
-            if "log_events_noop_runs" in original_config["pump"]:
-                config_changed = True
-                original_config["pump"].pop("log_events_noop_runs")
-
-            if "log_events_noop_runs_changes_only" in original_config["pump"]:
-                config_changed = True
-                original_config["pump"].pop("log_events_noop_runs_changes_only")
-
-            if config_changed:
-                # Save the pipe without these unwanted execution log flags
-                pipe.modify(original_config)
-
-
 @app.route('/start', methods=['POST'])
 def start():
     reset_pipes = request.args.get('reset_pipes')
+    disable_pipes = request.args.get('disable_pipes', "true") == "true"
     zero_runs = int(request.args.get("zero_runs", DEFAULT_ZERO_RUNS))
     delete_datasets = request.args.get('delete_datasets')
     skip_input_pipes = request.args.get('skip_input_pipes')
@@ -288,6 +275,8 @@ def start():
                  "ERROR": logging.ERROR}.get(request.args.get('log_level', 'INFO'), logging.INFO)
 
     logger.setLevel(log_level)
+
+    logger.info("Scheduler start() called! Arguments: %s" % repr(request.args))
 
     global scheduler
     global node_url
@@ -311,8 +300,6 @@ def start():
         graph = Graph(api_connection)
         logger.info("Graph built: %s nodes" % len(graph.nodes))
 
-        turn_on_execution_logging(api_connection)
-
         # Compute optimal rank
         graph.unvisitNodes()
 
@@ -328,18 +315,9 @@ def start():
         # iterate over the connected components in the graph (the flows)
 
         graph.unvisitNodes()
-
-        try:
-            all_runner = Runner(api_connection=api_connection, pipes=[p.id for p in graph.pipes])
-        except BaseException as e:
-            logger.exception("Failed to read config from the node - check if config is valid")
-            return Response(status=403, response="\n\nFailed to read config from the node, can't start scheduler - "
-                                                 "check if the config is valid\n\nThe exception was: \n%s" % repr(e))
-
         sub_graph_runners = []
 
         # Compute optimal ranking for all subgraphs using Tarjan's algorithm
-
         for subgraph in range(0, connected_components):
             logger.debug("Processing subgraph #%s..." % subgraph)
 
@@ -369,16 +347,45 @@ def start():
 
             try:
                 runner = Runner(api_connection=api_connection, pipes=pipes, skip_output_pipes=True)
+
+                if disable_pipes is True:
+                    # Make sure the endpoint pipes are disabled as well, as the runner doesn't include them
+                    endpoint_pipes = []
+                    for pipe_id in pipes:
+                        pipe = api_connection.get_pipe(pipe_id)
+                        if not pipe:
+                            logger.error("Couldn't find pipe '%s'!" % pipe_id)
+                            sys.exit(1)
+
+                        effective_config = pipe._raw_jsondata["config"]["effective"]
+                        source = effective_config.get("source")
+                        sink = effective_config.get("sink")
+
+                        source_system = source.get("system")
+                        sink_system = sink.get("system")
+
+                        if source["type"] in ["http_endpoint", "embedded"]:
+                            continue
+                        else:
+                            if source_system.startswith("system:sesam-node"):
+                                if not sink_system.startswith("system:sesam-node"):
+                                    # Disable endpoint pipe
+                                    endpoint_pipes.append(pipe)
+
+                    if len(endpoint_pipes) > 0:
+                        logger.info("Disabling %s endpoint pipes..." % len(endpoint_pipes))
+                        runner.stop_and_disable_pipes(endpoint_pipes)
             except BaseException as e:
                 return Response(status=403, response="Failed to read config from the node, can't start scheduler - "
-                                                     "check if the config is valid")
+                                                     "check if the config is valid\n\nThe exception was:\n%s" % repr(e))
 
             runner.subgraph = subgraph
             sub_graph_runners.append(runner)
 
         scheduler = SchedulerThread(sub_graph_runners)
         scheduler.start(reset_pipes=reset_pipes, delete_datasets=delete_datasets, skip_input_pipes=skip_input_pipes,
-                        compact_execution_datasets=compact_execution_datasets, zero_runs=zero_runs)
+                        compact_execution_datasets=compact_execution_datasets, disable_pipes=disable_pipes,
+                        zero_runs=zero_runs)
         return Response(status=200, response="Bootstrap scheduler started")
     else:
         return Response(status=403, response="Bootstrap scheduler is already running")
@@ -386,6 +393,8 @@ def start():
 
 @app.route('/stop', methods=['POST'])
 def stop():
+
+    logger.info("Scheduler stop() called!")
 
     global scheduler
 
@@ -416,8 +425,10 @@ def status():
     global scheduler
 
     if scheduler is None:
+        logger.info("Scheduler status() called! Result = 'init'")
         return Response(status=200, response=json.dumps({"state": "init"}), mimetype='application/json')
 
+    logger.info("Scheduler status() called! Result = '%s'" % scheduler.status)
     return Response(status=200, response=json.dumps({"state": scheduler.status}), mimetype='application/json')
 
 
@@ -482,6 +493,8 @@ if __name__ == '__main__':
     else:
         node_url = "http://sesam-node:8042/api"
 
+    http_port = int(os.environ.get("SCHEDULER_PORT", DEFAULT_SCHEDULER_PORT))
+
     jwt_token = os.environ.get("JWT")
     if not jwt_token:
         jwt_token = args.jwt_token
@@ -494,4 +507,8 @@ if __name__ == '__main__':
 
     logger.info("Master API endpoint is: %s" % node_url)
 
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    werkzeug_log = logging.getLogger('werkzeug')
+    werkzeug_log.disabled = True
+    app.logger.disabled = True
+
+    app.run(debug=False, host='0.0.0.0', port=http_port)
